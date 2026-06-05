@@ -158,7 +158,7 @@ def get_status_badge(status):
 @st.cache_data(show_spinner=False)
 def load_and_process_data(filepath_or_buffer):
     """Load CSV hasil EDA & clustering, compute derived features."""
-    df_raw = pd.read_csv("C:/Users/Daniel Rizal Alonso/Downloads/Ds Sfinity/Data/Dataset/student_spending (1).csv")
+    df_raw = pd.read_csv("Data/student_spending (1).csv")
  
     df = df_raw.rename(columns={
         'Unnamed: 0'     : 'id',
