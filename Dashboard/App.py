@@ -694,19 +694,24 @@ with tab4:
         avg_sc = subset['financial_score'].mean() if len(subset) > 0 else 0
         status = make_status(avg_sc, meta['p25'], meta['p50'], meta['p75'])
         color  = CLUSTER_PALETTE[int(cl) % len(CLUSTER_PALETTE)]
-        with col:
-            st.markdown(f"""
-            <div style="background:white;border-top:4px solid {color};border-radius:12px;
-                        padding:16px;text-align:center;box-shadow:0 1px 6px rgba(0,0,0,.08);">
-                <div style="font-size:11px;color:#94a3b8;font-weight:700;letter-spacing:.08em;
-                            text-transform:uppercase;">Cluster {int(cl)}</div>
-                <div style="font-size:13px;font-weight:800;color:{color};margin:6px 0;line-height:1.4;">
-                    {nama_cluster[int(cl)]}</div>
-                <div style="font-size:12px;color:#64748b;">{len(subset):,} mahasiswa</div>
-                <div style="margin-top:8px;">{get_status_badge(status)}</div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:5px;">
-                    Score: {avg_sc:.1f} · Pemasukan: {fmt_rupiah(subset['total_pemasukan'].mean())}</div>
-            </div>""", unsafe_allow_html=True)
+for col, cl in zip(cols_cards, cluster_list):
+    subset = fdf[fdf['cluster'] == cl]
+    avg_sc = subset['financial_score'].mean() if len(subset) > 0 else 0
+    status = make_status(avg_sc, meta['p25'], meta['p50'], meta['p75'])
+    color  = CLUSTER_NAME_COLORS.get(nama_cluster[int(cl)], "#3b82f6")  # ← ini yang diubah
+    with col:
+        st.markdown(f"""
+        <div style="background:white;border-top:4px solid {color};border-radius:12px;
+                    padding:16px;text-align:center;box-shadow:0 1px 6px rgba(0,0,0,.08);">
+            <div style="font-size:11px;color:#94a3b8;font-weight:700;letter-spacing:.08em;
+                        text-transform:uppercase;">Cluster {int(cl)}</div>
+            <div style="font-size:13px;font-weight:800;color:{color};margin:6px 0;line-height:1.4;">
+                {nama_cluster[int(cl)]}</div>
+            <div style="font-size:12px;color:#64748b;">{len(subset):,} mahasiswa</div>
+            <div style="margin-top:8px;">{get_status_badge(status)}</div>
+            <div style="font-size:12px;color:#94a3b8;margin-top:5px;">
+                Score: {avg_sc:.1f} · Pemasukan: {fmt_rupiah(subset['total_pemasukan'].mean())}</div>
+        </div>""", unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
