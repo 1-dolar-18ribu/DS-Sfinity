@@ -54,7 +54,7 @@ html, body, [class*="css"] {
     margin-bottom: 6px;
 }
 .metric-card .value {
-    font-size: 16px;
+    font-size: 28px;
     font-weight: 800;
     color: #f1f5f9;
     font-family: 'JetBrains Mono', monospace;
@@ -395,30 +395,25 @@ categorical_cols = meta['categorical_cols']
 # ─────────────────────────────────────────────
 # KPI BAR
 # ─────────────────────────────────────────────
-row1 = st.columns(3)
-row2 = st.columns(2)
-
-# Baris 1
-for col, (label, value, sub) in zip(row1, kpi_data[:3]):
+c1, c2, c3, c4, c5 = st.columns(5)
+kpi_data = [
+    ("Total Mahasiswa", f"{len(df):,}", "orang"),
+    ("Cluster", str(best_k), "K-Means optimal"),
+    ("Silhouette", f"{meta['sil']:.3f}", "kualitas cluster"),
+    ("Avg Income", fmt_rupiah(df['total_pemasukan'].mean()), "per bulan"),
+    ("Avg Score", f"{df['financial_score'].mean():.1f}", "financial health"),
+]
+for col, (label, value, sub) in zip([c1, c2, c3, c4, c5], kpi_data):
     with col:
         st.markdown(f"""
         <div class="metric-card">
             <div class="label">{label}</div>
             <div class="value">{value}</div>
             <div class="sub">{sub}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-# Baris 2
-for col, (label, value, sub) in zip(row2, kpi_data[3:]):
-    with col:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="label">{label}</div>
-            <div class="value">{value}</div>
-            <div class="sub">{sub}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        </div>""", unsafe_allow_html=True)
+ 
+st.markdown("<br>", unsafe_allow_html=True)
+ 
 # ─────────────────────────────────────────────
 # TABS
 # ─────────────────────────────────────────────
