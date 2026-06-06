@@ -1,4 +1,5 @@
 import os
+import requests
 import warnings
 import streamlit as st
 import pandas as pd
@@ -10,6 +11,7 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score, davies_bouldin_score
+
 
 warnings.filterwarnings("ignore")
 
@@ -62,8 +64,19 @@ body { background: #f1f5f9 !important; }
 """, unsafe_allow_html=True)
 
 # ── CONSTANTS — SAMA PERSIS DENGAN NOTEBOOK ────────────────────────────────────
-KURS_USD_IDR = 16_000  # sama dengan notebook
 
+
+def get_live_kurs():
+    try:
+        r = requests.get(
+            "https://api.frankfurter.app/latest?from=USD&to=IDR",
+            timeout=5
+        )
+        return int(r.json()["rates"]["IDR"])
+    except Exception:
+        return 18_000  # fallback
+
+KURS_USD_IDR = get_live_kurs()
 # Rasio penyesuaian konteks Indonesia — SAMA PERSIS NOTEBOOK
 RASIO = {
     'pendidikan'     : 0.20,
