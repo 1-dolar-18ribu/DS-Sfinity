@@ -63,8 +63,7 @@ body { background: #f1f5f9 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── CONSTANTS — SAMA PERSIS DENGAN NOTEBOOK ────────────────────────────────────
-
+# ── CONSTANTS ─────────────────────────────────────────────────────────────────
 
 def get_live_kurs():
     try:
@@ -74,21 +73,24 @@ def get_live_kurs():
         )
         return int(r.json()["rates"]["IDR"])
     except Exception:
-        return 18_000  # fallback
+        return 18_035  # fallback kurs Juni 2026
 
 KURS_USD_IDR = get_live_kurs()
-# Rasio penyesuaian konteks Indonesia — SAMA PERSIS NOTEBOOK
+INCOME_SCALE = 0.20  # PPP adjustment: konversi income ke standar Indonesia
+
+# Rasio pengeluaran disesuaikan biaya hidup mahasiswa Indonesia
+# Referensi: BPS 2023, survei kos mahasiswa kota besar Indonesia
 RASIO = {
-    'pendidikan'     : 0.20,
-    'tempat_tinggal' : 0.30,
-    'makanan'        : 0.35,
-    'transportasi'   : 0.30,
-    'buku'           : 0.40,
-    'hiburan'        : 0.30,
-    'perawatan'      : 0.35,
-    'teknologi'      : 0.45,
-    'kesehatan'      : 0.35,
-    'lainnya'        : 0.35,
+    'pendidikan'     : 0.037,  # UKT/bln ~300-600rb
+    'tempat_tinggal' : 0.063,  # kos ~600rb-1.5jt
+    'makanan'        : 0.059,  # makan 3x ~700rb-1.2jt
+    'transportasi'   : 0.049,  # bensin/ojol ~250-600rb
+    'buku'           : 0.028,  # buku/fotokopi ~80-200rb
+    'hiburan'        : 0.055,  # hiburan ~150-350rb
+    'perawatan'      : 0.042,  # perawatan diri ~120-300rb
+    'teknologi'      : 0.037,  # kuota/aksesori ~150-400rb
+    'kesehatan'      : 0.028,  # obat/klinik ~80-200rb
+    'lainnya'        : 0.042,  # lain-lain ~120-300rb
 }
 
 SPENDING_COLS = [
@@ -115,7 +117,7 @@ LABEL_KOLOM = {
     'total_pemasukan'   : 'Total Pemasukan (Rp)',
     'total_pengeluaran' : 'Total Pengeluaran (Rp)',
     'sisa_uang'         : 'Sisa Uang (Rp)',
-    'rasio_pengeluaran' : 'Rasio Pengeluaran (0–1)',
+    'rasio_pengeluaran' : 'Rasio Pengeluaran (0-1)',
     'pendidikan'        : 'Pendidikan (Rp)',
     'tempat_tinggal'    : 'Tempat Tinggal (Rp)',
     'makanan'           : 'Makanan (Rp)',
@@ -126,13 +128,13 @@ LABEL_KOLOM = {
     'teknologi'         : 'Teknologi (Rp)',
     'kesehatan'         : 'Kesehatan (Rp)',
     'lainnya'           : 'Lainnya (Rp)',
-    'financial_score'   : 'Skor Keuangan (0–100)',
+    'financial_score'   : 'Skor Keuangan (0-100)',
     'usia'              : 'Usia (tahun)',
     'pendapatan'        : 'Pendapatan (Rp)',
     'bantuan'           : 'Bantuan Keuangan (Rp)',
 }
 
-# ── HELPERS ────────────────────────────────────────────────────────────────────
+# ── HELPERS ───────────────────────────────────────────────────────────────────
 def kolom_label(col):
     return LABEL_KOLOM.get(col, col.replace('_', ' ').title())
 
@@ -170,7 +172,7 @@ def jt_ticks(series, n=6):
     texts = [f"Rp{v/1_000_000:.1f}Jt" if abs(v) >= 1_000_000 else f"Rp{v/1_000:.0f}rb" for v in vals]
     return vals.tolist(), texts
 
-# ── DATA LOADING — LOGIKA KONVERSI SAMA PERSIS NOTEBOOK ───────────────────────
+# ── DATA LOADING ──────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def load_and_process_data(file_key: str):
     path = "Data/student_spending (1).csv" if file_key == "__default__" else file_key
@@ -193,21 +195,21 @@ def load_and_process_data(file_key: str):
         'miscellaneous'  : 'lainnya',
     })
 
-    # ── Konversi income (kali kurs saja, tanpa rasio) — SAMA NOTEBOOK
+    # ── Konversi income: kurs × INCOME_SCALE (PPP adjustment)
     for col in ['pendapatan', 'bantuan']:
         if col in df.columns:
-            df[col] = (df[col] * KURS_USD_IDR).round(0)
+            df[col] = (df[col] * KURS_USD_IDR * INCOME_SCALE).round(0)
 
-    # ── Konversi spending pakai RASIO — SAMA NOTEBOOK
+    # ── Konversi spending pakai RASIO disesuaikan biaya hidup Indonesia
     for col, rasio_val in RASIO.items():
         if col in df.columns:
             if col == 'pendidikan':
-                # Bagi 6 (semester → bulanan) lalu kali kurs & rasio — SAMA NOTEBOOK
+                # Bagi 6 (semester -> bulanan) lalu kali kurs & rasio
                 df[col] = (df[col] / 6 * KURS_USD_IDR * rasio_val).round(0)
             else:
                 df[col] = (df[col] * KURS_USD_IDR * rasio_val).round(0)
 
-    # ── Derived columns — SAMA NOTEBOOK
+    # ── Derived columns
     df['total_pemasukan']   = df['pendapatan'] + df['bantuan']
     df['total_pengeluaran'] = df[SPENDING_COLS].sum(axis=1)
     df['sisa_uang']         = df['total_pemasukan'] - df['total_pengeluaran']
@@ -215,7 +217,7 @@ def load_and_process_data(file_key: str):
         df['total_pengeluaran'] / df['total_pemasukan'].replace(0, np.nan)
     )
 
-    # ── Financial Health Score — SAMA PERSIS NOTEBOOK
+    # ── Financial Health Score
     def hitung_financial_score(row):
         total_peng = row['total_pengeluaran']
         total_in   = row['total_pemasukan']
@@ -255,7 +257,7 @@ def load_and_process_data(file_key: str):
 
     df['status_finansial'] = df['financial_score'].apply(get_status)
 
-    # ── Clustering — SAMA NOTEBOOK
+    # ── Clustering
     cat_cols = [c for c in df.select_dtypes('object').columns
                 if c not in ['status_finansial', 'nama_cluster']]
     df_enc = df.copy()
@@ -302,14 +304,14 @@ def load_and_process_data(file_key: str):
                     if c in df.columns]
     profil = df.groupby('cluster')[kolom_profil].mean().round(0)
 
-    # Penamaan cluster — SAMA NOTEBOOK
+    # Penamaan cluster
     sisa_rank  = profil['sisa_uang'].rank(ascending=False)
     rasio_rank = profil['rasio_pengeluaran'].rank(ascending=True)
     pend_rank  = profil['total_pemasukan'].rank(ascending=False)
 
     nama_cluster = {}
     for cl in cluster_list:
-        r_sisa = sisa_rank[cl]
+        r_sisa  = sisa_rank[cl]
         r_rasio = rasio_rank[cl]
         r_pend  = pend_rank[cl]
         if r_sisa <= 1 and r_pend <= 1:
@@ -347,24 +349,25 @@ def load_and_process_data(file_key: str):
     )
     return df, meta
 
-# ── SIDEBAR ────────────────────────────────────────────────────────────────────
+# ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 🎓 Financial Dashboard")
     st.markdown("**Clustering Finansial Mahasiswa**")
     st.divider()
-    st.caption(f"Dashboard · Data: Kaggle Student Spending · Kurs Rp{KURS_USD_IDR:,}/USD")
+    st.caption(f"Dashboard · Data: Kaggle Student Spending · Kurs Rp{KURS_USD_IDR:,}/USD · PPP Scale: {INCOME_SCALE}")
 DEFAULT_DATA_PATH = "Data/student_spending (1).csv"
 uploaded_file = None  # tidak ada uploader lagi
-# ── HEADER ─────────────────────────────────────────────────────────────────────
+
+# ── HEADER ────────────────────────────────────────────────────────────────────
 st.markdown(
     '<h1 style="font-size:1.8rem;font-weight:800;color:#0f172a;margin-bottom:4px;">'
     '💰 Dashboard Finansial Mahasiswa Indonesia</h1>', unsafe_allow_html=True)
 st.markdown(
     '<p style="color:#64748b;font-size:0.95rem;margin-bottom:20px;">'
-    f'Analisis K-Means Clustering · Konversi USD → IDR (kurs Rp{KURS_USD_IDR:,} + rasio biaya hidup) · Financial Health Score</p>',
+    f'Analisis K-Means Clustering · Konversi USD → IDR (kurs Rp{KURS_USD_IDR:,} × PPP adjustment) · Financial Health Score</p>',
     unsafe_allow_html=True)
 
-# ── LOAD DATA ──────────────────────────────────────────────────────────────────
+# ── LOAD DATA ─────────────────────────────────────────────────────────────────
 if uploaded_file is not None:
     uploaded_file.seek(0)
     tmp_path = f"/tmp/{uploaded_file.name}"
@@ -399,7 +402,7 @@ fdf = df[df['nama_cluster'].isin(cluster_filter)]
 if gender_opts: fdf = fdf[fdf['gender'].isin(gender_filter)]
 if year_opts:   fdf = fdf[fdf['year_in_school'].isin(year_filter)]
 
-# ── KPI CARDS ──────────────────────────────────────────────────────────────────
+# ── KPI CARDS ─────────────────────────────────────────────────────────────────
 kpi_data = [
     ("Total Mahasiswa",     f"{len(fdf):,}",                                   "responden"),
     ("Cluster Optimal",     str(best_k),                                        "K-Means"),
@@ -418,14 +421,14 @@ for col, (label, value, sub) in zip(cols, kpi_data):
         </div>""", unsafe_allow_html=True)
 st.markdown("<br>", unsafe_allow_html=True)
 
-# ── TABS ───────────────────────────────────────────────────────────────────────
+# ── TABS ──────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 Overview","🔍 EDA","🤖 Clustering","🏷️ Profil Cluster","📥 Export"
 ])
 
 IDR_COLS = ['pendapatan','bantuan','total_pemasukan','total_pengeluaran','sisa_uang'] + SPENDING_COLS
 
-# ══════════════ TAB 1 — OVERVIEW ═══════════════════════════════════════════════
+# ══════════════ TAB 1 — OVERVIEW ══════════════════════════════════════════════
 with tab1:
     st.markdown('<div class="section-card"><div class="section-title">📊 Ringkasan Kesehatan Finansial</div>'
                 '<div class="section-sub">Gambaran besar kondisi keuangan seluruh mahasiswa yang difilter</div>',
@@ -453,11 +456,10 @@ with tab1:
                           xaxis_title="Jumlah Mahasiswa", yaxis_title="Status Finansial")
         st.plotly_chart(fig, use_container_width=True)
 
-    # Histogram financial score
     fig = px.histogram(fdf, x='financial_score', nbins=30,
                        color_discrete_sequence=['#6366f1'],
                        title="🎯 Distribusi Financial Health Score",
-                       labels={'financial_score':'Financial Health Score (0–100)','count':'Jumlah Mahasiswa'},
+                       labels={'financial_score':'Financial Health Score (0-100)','count':'Jumlah Mahasiswa'},
                        marginal='rug')
     mean_val = fdf['financial_score'].mean()
     med_val  = fdf['financial_score'].median()
@@ -471,7 +473,7 @@ with tab1:
                       annotation_text=ann_lbl, annotation_position='top right',
                       annotation_font_color=col_line)
     fig.update_layout(**PL, height=340, margin=M,
-                      xaxis_title="Financial Health Score (0–100)",
+                      xaxis_title="Financial Health Score (0-100)",
                       yaxis_title="Jumlah Mahasiswa")
     st.plotly_chart(fig, use_container_width=True)
 
@@ -486,7 +488,7 @@ with tab1:
     </div>""", unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-# ══════════════ TAB 2 — EDA ════════════════════════════════════════════════════
+# ══════════════ TAB 2 — EDA ═══════════════════════════════════════════════════
 with tab2:
     st.markdown('<div class="section-card"><div class="section-title">🔍 Exploratory Data Analysis</div>'
                 '<div class="section-sub">Distribusi, korelasi, dan pola pengeluaran mahasiswa</div>',
@@ -642,6 +644,7 @@ with tab2:
         else:
             st.info("Tidak ada kolom kategorikal.")
     st.markdown('</div>', unsafe_allow_html=True)
+
 # ══════════════ TAB 3 — CLUSTERING ════════════════════════════════════════════
 with tab3:
     st.markdown('<div class="section-card"><div class="section-title">🤖 Proses Clustering K-Means</div>'
@@ -710,7 +713,6 @@ with tab3:
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ══════════════ TAB 4 — PROFIL CLUSTER ════════════════════════════════════════
-# ══════════════ TAB 4 — PROFIL CLUSTER ════════════════════════════════════════
 with tab4:
     st.markdown('<div class="section-card"><div class="section-title">🏷️ Profil & Karakteristik Cluster</div>'
                 '<div class="section-sub">Ringkasan mendalam setiap segmen mahasiswa berdasarkan hasil clustering</div>',
@@ -738,7 +740,6 @@ with tab4:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Heatmap profil
     kolom_hm = meta['kolom_profil']
     profil_hm   = profil[kolom_hm]
     profil_norm = ((profil_hm - profil_hm.mean()) / profil_hm.std()).round(2)
@@ -764,7 +765,6 @@ with tab4:
                       yaxis=dict(title="Variabel Keuangan", tickfont=dict(size=10)))
     st.plotly_chart(fig, use_container_width=True, key="t4_heatmap")
 
-    # Perbandingan KPI
     st.markdown("#### 📊 Perbandingan KPI Antar Cluster")
     kpi_cols = [c for c in ['total_pemasukan', 'total_pengeluaran', 'sisa_uang',
                              'rasio_pengeluaran', 'hiburan', 'teknologi', 'financial_score']
@@ -792,7 +792,6 @@ with tab4:
                       xaxis=dict(tickangle=0, gridcolor='#e2e8f0', title='Segmen Cluster'))
     st.plotly_chart(fig, use_container_width=True, key="t4_bar_kpi")
 
-    # Distribusi status per cluster
     st.markdown("#### 📊 Distribusi Status Finansial per Cluster")
     status_data = fdf.groupby(['nama_cluster', 'status_finansial']).size().reset_index(name='Jumlah')
     total_per_cl = status_data.groupby('nama_cluster')['Jumlah'].transform('sum')
@@ -810,12 +809,11 @@ with tab4:
                       legend=dict(orientation='h', yanchor='bottom', y=-0.3, xanchor='center', x=0.5))
     st.plotly_chart(fig, use_container_width=True, key="t4_bar_status")
 
-    # Violin plot
     st.markdown("#### 🎻 Sebaran Financial Score per Cluster")
     fig = px.violin(fdf.dropna(subset=['cluster', 'financial_score']),
                     x='nama_cluster', y='financial_score', color='nama_cluster',
                     color_discrete_sequence=CLUSTER_PALETTE, box=True, points='outliers',
-                    labels={'nama_cluster': 'Segmen Cluster', 'financial_score': 'Financial Health Score (0–100)'},
+                    labels={'nama_cluster': 'Segmen Cluster', 'financial_score': 'Financial Health Score (0-100)'},
                     title="Distribusi Financial Health Score per Cluster")
     for th_val, th_col, th_ann in [
         (meta['p25'], '#ef4444', f'Batas Bahaya/Waspada: {meta["p25"]:.1f}'),
@@ -827,9 +825,10 @@ with tab4:
                       annotation_font_color=th_col)
     fig.update_layout(**PL, height=420, showlegend=False, margin=M,
                       xaxis=dict(tickangle=0, gridcolor='#e2e8f0', title='Segmen Cluster'),
-                      yaxis_title="Financial Health Score (0–100)")
+                      yaxis_title="Financial Health Score (0-100)")
     st.plotly_chart(fig, use_container_width=True, key="t4_violin")
     st.markdown('</div>', unsafe_allow_html=True)
+
 # ══════════════ TAB 5 — EXPORT ════════════════════════════════════════════════
 with tab5:
     st.markdown('<div class="section-card"><div class="section-title">📥 Export & Ringkasan Akhir</div>'
@@ -873,7 +872,8 @@ with tab5:
 
     st.markdown(f"""<div class="insight-box">
     ✅ <b>Ringkasan Analisis:</b><br>
-    • Dataset: <b>{len(df):,} mahasiswa</b> · Kurs: 1 USD = Rp {KURS_USD_IDR:,} + rasio biaya hidup Indonesia<br>
+    • Dataset: <b>{len(df):,} mahasiswa</b> · Kurs: 1 USD = Rp {KURS_USD_IDR:,} · PPP scale: {INCOME_SCALE}<br>
+    • Target income: Rp 2–7 juta/bln · Target pengeluaran: Rp 1.5–4 juta/bln<br>
     • Algoritma: K-Means (k optimal={best_k}) · Silhouette={meta['sil']:.4f} · Davies-Bouldin={meta['db']:.4f}<br>
     • Fitur clustering: {len(meta['fitur'])} variabel · Data terfilter: {len(fdf):,} mahasiswa<br>
     • Kolom tambahan: <code>cluster</code>, <code>nama_cluster</code>,
@@ -884,5 +884,5 @@ with tab5:
 st.markdown(
     f'<div style="text-align:center;color:#94a3b8;font-size:.78rem;margin-top:1.5rem;">'
     f'Financial Clustering Dashboard · K-Means (k={best_k}) · '
-    f'Kurs 1 USD = Rp {KURS_USD_IDR:,} · Data: Kaggle Student Spending</div>',
+    f'Kurs 1 USD = Rp {KURS_USD_IDR:,} · PPP Scale {INCOME_SCALE} · Data: Kaggle Student Spending</div>',
     unsafe_allow_html=True)
