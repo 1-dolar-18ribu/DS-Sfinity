@@ -344,12 +344,9 @@ with st.sidebar:
     st.markdown("## 🎓 Financial Dashboard")
     st.markdown("**Clustering Finansial Mahasiswa**")
     st.divider()
-    st.markdown("### 📂 Sumber Data")
-    DEFAULT_DATA_PATH = "Data/student_spending (1).csv"
-    uploaded_file = st.file_uploader("Upload CSV lain *(opsional)*", type=["csv"])
-    st.divider()
     st.caption(f"Dashboard · Data: Kaggle Student Spending · Kurs Rp{KURS_USD_IDR:,}/USD")
-
+DEFAULT_DATA_PATH = "Data/student_spending (1).csv"
+uploaded_file = None  # tidak ada uploader lagi
 # ── HEADER ─────────────────────────────────────────────────────────────────────
 st.markdown(
     '<h1 style="font-size:1.8rem;font-weight:800;color:#0f172a;margin-bottom:4px;">'
