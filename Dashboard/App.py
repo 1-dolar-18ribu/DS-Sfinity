@@ -6,14 +6,14 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
- 
+
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score, davies_bouldin_score
- 
+
 warnings.filterwarnings("ignore")
- 
+
 # ─────────────────────────────────────────────
 # PAGE CONFIG
 # ─────────────────────────────────────────────
@@ -23,21 +23,21 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
- 
+
 # ─────────────────────────────────────────────
 # CUSTOM CSS  (light bg seperti versi 400 baris)
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
- 
+
 html, body, [class*="css"] {
     font-family: 'Plus Jakarta Sans', sans-serif;
 }
- 
+
 body { background: #f1f5f9 !important; }
 [data-testid="stAppViewContainer"] { background: #f1f5f9; }
- 
+
 .metric-card {
     background: white;
     border-radius: 12px;
@@ -63,7 +63,7 @@ body { background: #f1f5f9 !important; }
     color: #94a3b8;
     margin-top: 4px;
 }
- 
+
 .section-card {
     background: white;
     border-radius: 12px;
@@ -82,7 +82,7 @@ body { background: #f1f5f9 !important; }
     color: #94a3b8;
     margin-bottom: 16px;
 }
- 
+
 .insight-box {
     background: #eff6ff;
     border-left: 4px solid #3b82f6;
@@ -92,16 +92,16 @@ body { background: #f1f5f9 !important; }
     color: #1e40af;
     margin-top: 10px;
 }
- 
+
 .badge-bahaya  { background:#ef4444; color:#fff; border-radius:6px; padding:2px 10px; font-size:12px; font-weight:700; }
 .badge-waspada { background:#f59e0b; color:#fff; border-radius:6px; padding:2px 10px; font-size:12px; font-weight:700; }
 .badge-stabil  { background:#3b82f6; color:#fff; border-radius:6px; padding:2px 10px; font-size:12px; font-weight:700; }
 .badge-sehat   { background:#22c55e; color:#fff; border-radius:6px; padding:2px 10px; font-size:12px; font-weight:700; }
- 
+
 .stTabs [data-baseweb="tab"] { font-weight: 600; font-size: 14px; }
 </style>
 """, unsafe_allow_html=True)
- 
+
 # ─────────────────────────────────────────────
 # CONSTANTS
 # ─────────────────────────────────────────────
@@ -128,10 +128,17 @@ STATUS_COLORS = {
 CLUSTER_PALETTE = [
     "#3b82f6","#f59e0b","#22c55e","#ef4444","#8b5cf6","#06b6d4"
 ]
- 
+
 # ─────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────
+def make_status(score: float, p25: float, p50: float, p75: float) -> str:
+    """Fungsi global – tidak disimpan di cache, selalu serializable."""
+    if score >= p75: return "Sangat Sehat"
+    if score >= p50: return "Stabil"
+    if score >= p25: return "Waspada"
+    return "Bahaya"
+
 def fmt_rupiah(val, short=True):
     if pd.isna(val):
         return "N/A"
@@ -142,14 +149,14 @@ def fmt_rupiah(val, short=True):
             return f"Rp {val/1_000:.0f}rb"
         return f"Rp {val:.0f}"
     return f"Rp {val:,.0f}"
- 
+
 def get_status_badge(status):
     cls_map = {
         "Bahaya": "bahaya", "Waspada": "waspada",
         "Stabil": "stabil", "Sangat Sehat": "sehat"
     }
     return f'<span class="badge-{cls_map.get(status, "stabil")}">{status}</span>'
- 
+
 # Plotly layout defaults (light theme, responsive)
 PLOTLY_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
@@ -159,7 +166,7 @@ PLOTLY_LAYOUT = dict(
     xaxis=dict(gridcolor="#e2e8f0", showgrid=True),
     yaxis=dict(gridcolor="#e2e8f0", showgrid=True),
 )
- 
+
 # ─────────────────────────────────────────────
 # DATA LOADING — hanya cache DataFrame + angka,
 # TIDAK cache model sklearn (biang kelambatan)
@@ -175,7 +182,7 @@ def load_and_process_data(file_key: str):
         df_raw = pd.read_csv("Data/student_spending (1).csv")
     else:
         df_raw = pd.read_csv(file_key)
- 
+
     # ── rename ──
     df = df_raw.rename(columns={
         'Unnamed: 0'     : 'id',
@@ -193,19 +200,19 @@ def load_and_process_data(file_key: str):
         'health_wellness': 'kesehatan',
         'miscellaneous'  : 'lainnya',
     })
- 
+
     # ── konversi USD → IDR ──
     for col in ['pendapatan', 'bantuan']:
         if col in df.columns:
             df[col] = (df[col] * KURS_USD_IDR).round(0)
- 
+
     for col, r in RASIO.items():
         if col in df.columns:
             if col == 'pendidikan':
                 df[col] = (df[col] / 6 * KURS_USD_IDR * r).round(0)
             else:
                 df[col] = (df[col] * KURS_USD_IDR * r).round(0)
- 
+
     # ── derived ──
     df['total_pemasukan']   = df['pendapatan'] + df['bantuan']
     df['total_pengeluaran'] = df[list(RASIO.keys())].sum(axis=1)
@@ -213,7 +220,7 @@ def load_and_process_data(file_key: str):
     df['rasio_pengeluaran'] = (
         df['total_pengeluaran'] / df['total_pemasukan'].replace(0, np.nan)
     )
- 
+
     # ── financial score ──
     def hitung_score(row):
         ti = row['total_pemasukan']
@@ -225,21 +232,23 @@ def load_and_process_data(file_key: str):
         buffer = max(0, min(1, row['sisa_uang'] / tp)) if tp > 0 else 0
         skor_c = buffer * 100
         return round(0.40*skor_a + 0.30*skor_b + 0.30*skor_c, 2)
- 
+
     df['financial_score'] = df.apply(hitung_score, axis=1)
- 
+
     p25 = float(df['financial_score'].quantile(0.25))
     p50 = float(df['financial_score'].quantile(0.50))
     p75 = float(df['financial_score'].quantile(0.75))
- 
-    def get_status(s):
-        if s >= p75:  return "Sangat Sehat"
-        if s >= p50:  return "Stabil"
-        if s >= p25:  return "Waspada"
-        return "Bahaya"
- 
-    df['status_finansial'] = df['financial_score'].apply(get_status)
- 
+
+    # Gunakan fungsi global (tidak disimpan di meta agar cache bisa serialize)
+    df['status_finansial'] = df['financial_score'].apply(
+        lambda s: (
+            "Sangat Sehat" if s >= p75 else
+            "Stabil"       if s >= p50 else
+            "Waspada"      if s >= p25 else
+            "Bahaya"
+        )
+    )
+
     # ── clustering ──
     cat_cols = [c for c in df.select_dtypes('object').columns
                 if c not in ['status_finansial', 'nama_cluster']]
@@ -247,7 +256,7 @@ def load_and_process_data(file_key: str):
     for col in cat_cols:
         le = LabelEncoder()
         df_enc[col+'_enc'] = le.fit_transform(df_enc[col].astype(str))
- 
+
     fitur = (
         ['total_pemasukan','total_pengeluaran','sisa_uang','rasio_pengeluaran',
          'pendidikan','tempat_tinggal','makanan','transportasi','hiburan',
@@ -255,11 +264,11 @@ def load_and_process_data(file_key: str):
         + [c+'_enc' for c in cat_cols if c+'_enc' in df_enc.columns]
     )
     fitur = [c for c in fitur if c in df_enc.columns]
- 
+
     X = df_enc[fitur].dropna()
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
- 
+
     # Pilih k optimal (silhouette)
     sil_scores = {}
     for k in range(2, 7):
@@ -267,33 +276,33 @@ def load_and_process_data(file_key: str):
         km.fit(X_scaled)
         sil_scores[k] = float(silhouette_score(X_scaled, km.labels_))
     best_k = max(sil_scores, key=sil_scores.get)
- 
+
     kmeans = KMeans(n_clusters=best_k, init='k-means++', n_init=20, random_state=42)
     kmeans.fit(X_scaled)
- 
+
     sil_val = float(silhouette_score(X_scaled, kmeans.labels_))
     db_val  = float(davies_bouldin_score(X_scaled, kmeans.labels_))
- 
+
     df.loc[X.index, 'cluster'] = kmeans.labels_.astype(int)
     df['cluster'] = df['cluster'].astype('Int64')
- 
+
     # PCA 2D — simpan sebagai list biasa (bukan numpy array)
     pca = PCA(n_components=2, random_state=42)
     X_pca = pca.fit_transform(X_scaled)
     var_exp = [float(v*100) for v in pca.explained_variance_ratio_]
- 
+
     # Nama cluster
     cluster_list = sorted(df['cluster'].dropna().unique().tolist())
     kol = ['total_pemasukan','total_pengeluaran','sisa_uang',
            'rasio_pengeluaran','financial_score']
     kol = [c for c in kol if c in df.columns]
     profil = df.groupby('cluster')[kol].mean().round(0)
- 
+
     sisa_rank  = profil['sisa_uang'].rank(ascending=False)
     rasio_rank = profil['rasio_pengeluaran'].rank(ascending=True)
     pend_rank  = profil['total_pemasukan'].rank(ascending=False)
     n_cl = len(cluster_list)
- 
+
     nama_cluster = {}
     for cl in cluster_list:
         rs = sisa_rank[cl]; rr = rasio_rank[cl]; rp = pend_rank[cl]
@@ -310,36 +319,39 @@ def load_and_process_data(file_key: str):
         else:
             label = "Rata-rata"
         nama_cluster[int(cl)] = f"Cluster {int(cl)}: {label}"
- 
+
     df['nama_cluster'] = df['cluster'].map(nama_cluster)
- 
+
     # Tambahkan kolom PCA ke df subset untuk scatter
     pca_df = pd.DataFrame(
         X_pca, index=X.index, columns=['PC1', 'PC2']
     )
     df = df.join(pca_df, how='left')
- 
+
     # Centroid PCA
     centroids_pca = pca.transform(kmeans.cluster_centers_)
     centroid_df = pd.DataFrame(centroids_pca, columns=['PC1','PC2'])
     centroid_df['cluster'] = list(range(best_k))
- 
+
+    # Reset profil index ke int biasa agar serializable
+    profil.index = profil.index.astype(int)
+
     meta = dict(
-        best_k=best_k,
-        sil=sil_val,
-        db=db_val,
+        best_k=int(best_k),
+        sil=float(sil_val),
+        db=float(db_val),
         profil=profil,
-        cluster_list=cluster_list,
-        nama_cluster=nama_cluster,
-        var_exp=var_exp,
-        p25=p25, p50=p50, p75=p75,
-        fitur=fitur,
-        sil_scores=sil_scores,
+        cluster_list=[int(c) for c in cluster_list],
+        nama_cluster={int(k): str(v) for k, v in nama_cluster.items()},
+        var_exp=[float(v) for v in var_exp],
+        p25=float(p25), p50=float(p50), p75=float(p75),
+        fitur=list(fitur),
+        sil_scores={int(k): float(v) for k, v in sil_scores.items()},
         centroid_df=centroid_df,
-        get_status=get_status,   # fungsi ringan, tidak masalah
+        # get_status TIDAK disimpan — pakai fungsi global make_status()
     )
     return df, meta
- 
+
 # ─────────────────────────────────────────────
 # SIDEBAR
 # ─────────────────────────────────────────────
@@ -347,13 +359,13 @@ with st.sidebar:
     st.markdown("## 🎓 Financial Dashboard")
     st.markdown("**Clustering Finansial Mahasiswa**")
     st.divider()
- 
+
     st.markdown("### 📂 Sumber Data")
     DEFAULT_DATA_PATH = "Data/student_spending (1).csv"
     uploaded_file = st.file_uploader("Upload CSV lain *(opsional)*", type=["csv"])
     st.divider()
     st.caption("Dashboard · Data: Kaggle Student Spending")
- 
+
 # ─────────────────────────────────────────────
 # LOAD DATA
 # ─────────────────────────────────────────────
@@ -367,7 +379,7 @@ st.markdown(
     'Analisis K-Means Clustering · Konversi USD → IDR · Financial Health Score</p>',
     unsafe_allow_html=True
 )
- 
+
 if uploaded_file is not None:
     uploaded_file.seek(0)
     tmp_path = f"/tmp/{uploaded_file.name}"
@@ -382,17 +394,17 @@ else:
         "Upload manual via sidebar."
     )
     st.stop()
- 
+
 with st.spinner("⚙️ Memuat & memproses data..."):
     df, meta = load_and_process_data(file_key)
- 
+
 profil       = meta['profil']
 cluster_list = meta['cluster_list']
 nama_cluster = meta['nama_cluster']
-get_status   = meta['get_status']
+# get_status diambil dari fungsi global make_status()
 best_k       = meta['best_k']
 pengeluaran_cols = [c for c in list(RASIO.keys()) if c in df.columns]
- 
+
 # ── Sidebar filters (setelah data loaded) ──
 with st.sidebar:
     st.markdown("### 🔍 Filter Data")
@@ -402,16 +414,16 @@ with st.sidebar:
     )
     gender_opts = df['gender'].dropna().unique().tolist() if 'gender' in df.columns else []
     gender_filter = st.multiselect("Gender", options=gender_opts, default=gender_opts)
- 
+
     year_opts = df['year_in_school'].dropna().unique().tolist() if 'year_in_school' in df.columns else []
     year_filter = st.multiselect("Tahun Kuliah", options=year_opts, default=year_opts)
- 
+
 fdf = df[df['nama_cluster'].isin(cluster_filter)]
 if gender_opts:
     fdf = fdf[fdf['gender'].isin(gender_filter)]
 if year_opts:
     fdf = fdf[fdf['year_in_school'].isin(year_filter)]
- 
+
 # ─────────────────────────────────────────────
 # KPI CARDS
 # ─────────────────────────────────────────────
@@ -432,9 +444,9 @@ for col, (label, value, sub) in zip(cols, kpi_data):
             <div class="value">{value}</div>
             <div class="sub">{sub}</div>
         </div>""", unsafe_allow_html=True)
- 
+
 st.markdown("<br>", unsafe_allow_html=True)
- 
+
 # ─────────────────────────────────────────────
 # TABS
 # ─────────────────────────────────────────────
@@ -442,16 +454,16 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 Overview", "🔍 EDA", "🤖 Clustering",
     "🏷️ Profil Cluster", "📥 Export"
 ])
- 
+
 # ══════════════════════════════════════════════
 # TAB 1 — OVERVIEW
 # ══════════════════════════════════════════════
 with tab1:
     st.markdown('<div class="section-card"><div class="section-title">📊 Ringkasan Kesehatan Finansial</div>'
                 '<div class="section-sub">Gambaran besar kondisi keuangan seluruh mahasiswa</div>', unsafe_allow_html=True)
- 
+
     col_left, col_right = st.columns(2)
- 
+
     with col_left:
         dist_status = fdf['status_finansial'].value_counts().reindex(STATUS_ORDER, fill_value=0)
         fig = px.pie(
@@ -465,7 +477,7 @@ with tab1:
         fig.update_traces(textposition='outside', textinfo='percent+label')
         fig.update_layout(**PLOTLY_LAYOUT, height=320, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
- 
+
     with col_right:
         dist_pct = (dist_status / len(fdf) * 100).round(1)
         fig = px.bar(
@@ -480,7 +492,7 @@ with tab1:
         fig.update_traces(textposition='outside')
         fig.update_layout(**PLOTLY_LAYOUT, height=320, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
- 
+
     # Histogram financial score
     fig = px.histogram(
         fdf, x='financial_score', nbins=30,
@@ -502,7 +514,7 @@ with tab1:
                       annotation_font_color=col_line)
     fig.update_layout(**PLOTLY_LAYOUT, height=340)
     st.plotly_chart(fig, use_container_width=True)
- 
+
     st.markdown(f"""
     <div class="insight-box">
     💡 <b>Interpretasi Score:</b> Financial Health Score dihitung dari 3 komponen:
@@ -511,25 +523,25 @@ with tab1:
     </div>
     """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
- 
+
 # ══════════════════════════════════════════════
 # TAB 2 — EDA
 # ══════════════════════════════════════════════
 with tab2:
     st.markdown('<div class="section-card"><div class="section-title">🔍 Exploratory Data Analysis</div>'
                 '<div class="section-sub">Distribusi, korelasi, dan pola pengeluaran</div>', unsafe_allow_html=True)
- 
+
     eda_sub = st.selectbox("Pilih analisis:", [
         "Distribusi Numerik", "Boxplot Pengeluaran",
         "Komposisi Pengeluaran", "Matriks Korelasi",
         "Distribusi Kategorikal"
     ])
- 
+
     if eda_sub == "Distribusi Numerik":
         numerik_cols = ['usia','pendapatan','bantuan','total_pemasukan',
                         'total_pengeluaran','sisa_uang','rasio_pengeluaran','financial_score']
         numerik_cols = [c for c in numerik_cols if c in fdf.columns]
- 
+
         # Plotly: 2 baris × 4 kolom, responsif otomatis
         fig = make_subplots(
             rows=2, cols=4,
@@ -560,7 +572,7 @@ with tab2:
                           **{k: v for k, v in PLOTLY_LAYOUT.items() if k not in ['xaxis','yaxis']},
                           showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
- 
+
     elif eda_sub == "Boxplot Pengeluaran":
         fig = go.Figure()
         for i, col in enumerate(pengeluaran_cols):
@@ -576,7 +588,7 @@ with tab2:
             showlegend=False,
         )
         st.plotly_chart(fig, use_container_width=True)
- 
+
     elif eda_sub == "Komposisi Pengeluaran":
         rata = fdf[pengeluaran_cols].mean().sort_values(ascending=False)
         col_l, col_r = st.columns(2)
@@ -599,7 +611,7 @@ with tab2:
             fig.update_layout(**PLOTLY_LAYOUT, height=380,
                               coloraxis_showscale=False, showlegend=False)
             st.plotly_chart(fig, use_container_width=True)
- 
+
     elif eda_sub == "Matriks Korelasi":
         num_cols = fdf.drop(columns=['id'], errors='ignore').select_dtypes('number').columns
         corr = fdf[num_cols].corr().round(2)
@@ -616,7 +628,7 @@ with tab2:
         )
         fig.update_layout(**PLOTLY_LAYOUT, height=560)
         st.plotly_chart(fig, use_container_width=True)
- 
+
     else:  # Kategorikal
         cat_cols_show = [c for c in fdf.select_dtypes('object').columns
                          if c not in ['status_finansial', 'nama_cluster']]
@@ -634,9 +646,9 @@ with tab2:
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Tidak ada kolom kategorikal terdeteksi.")
- 
+
     st.markdown('</div>', unsafe_allow_html=True)
- 
+
 # ══════════════════════════════════════════════
 # TAB 3 — CLUSTERING
 # ══════════════════════════════════════════════
@@ -644,9 +656,9 @@ with tab3:
     st.markdown('<div class="section-card"><div class="section-title">🤖 Proses Clustering K-Means</div>'
                 '<div class="section-sub">Seleksi cluster optimal, visualisasi PCA, dan metrik evaluasi</div>',
                 unsafe_allow_html=True)
- 
+
     col_a, col_b = st.columns(2)
- 
+
     with col_a:
         k_range = sorted(meta['sil_scores'].keys())
         sil_vals = [meta['sil_scores'][k] for k in k_range]
@@ -670,7 +682,7 @@ with tab3:
             xaxis=dict(tickmode='array', tickvals=list(k_range), gridcolor='#e2e8f0'),
         )
         st.plotly_chart(fig, use_container_width=True)
- 
+
     with col_b:
         ev_data = {
             "Metrik": ["Jumlah Cluster (k)", "Silhouette Score",
@@ -682,7 +694,7 @@ with tab3:
         }
         st.markdown("#### 📊 Evaluasi Model")
         st.dataframe(pd.DataFrame(ev_data), use_container_width=True, hide_index=True)
- 
+
     # PCA scatter — pakai kolom yang sudah ada di df
     pca_df_plot = fdf.dropna(subset=['PC1','PC2','nama_cluster'])
     fig = px.scatter(
@@ -718,7 +730,7 @@ with tab3:
                       legend=dict(orientation='h', yanchor='bottom',
                                   y=-0.25, xanchor='center', x=0.5))
     st.plotly_chart(fig, use_container_width=True)
- 
+
     st.markdown(f"""
     <div class="insight-box">
     💡 <b>Tentang PCA:</b> PC1 + PC2 menjelaskan
@@ -727,7 +739,7 @@ with tab3:
     </div>
     """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
- 
+
 # ══════════════════════════════════════════════
 # TAB 4 — PROFIL CLUSTER
 # ══════════════════════════════════════════════
@@ -735,13 +747,13 @@ with tab4:
     st.markdown('<div class="section-card"><div class="section-title">🏷️ Profil & Karakteristik Cluster</div>'
                 '<div class="section-sub">Ringkasan mendalam setiap segmen mahasiswa</div>',
                 unsafe_allow_html=True)
- 
+
     # Summary cards
     cols_cards = st.columns(len(cluster_list))
     for col, cl in zip(cols_cards, cluster_list):
         subset  = fdf[fdf['cluster'] == cl]
         avg_sc  = subset['financial_score'].mean() if len(subset) > 0 else 0
-        status  = get_status(avg_sc)
+        status  = make_status(avg_sc, meta['p25'], meta['p50'], meta['p75'])
         color   = CLUSTER_PALETTE[int(cl) % len(CLUSTER_PALETTE)]
         with col:
             st.markdown(f"""
@@ -759,9 +771,9 @@ with tab4:
                 <div style="font-size:12px;color:#64748b;margin-top:4px;">Score: {avg_sc:.1f}</div>
             </div>
             """, unsafe_allow_html=True)
- 
+
     st.markdown("<br>", unsafe_allow_html=True)
- 
+
     # Heatmap profil (Plotly — interaktif, teks tidak terpotong)
     kolom_hm = [c for c in ['total_pemasukan','total_pengeluaran','sisa_uang',
                              'rasio_pengeluaran','pendidikan','tempat_tinggal',
@@ -769,10 +781,10 @@ with tab4:
                 if c in profil.columns]
     profil_hm   = profil[kolom_hm]
     profil_norm = ((profil_hm - profil_hm.mean()) / profil_hm.std()).round(2)
- 
+
     x_labels = [nama_cluster.get(int(c), f"Cluster {int(c)}") for c in profil_hm.index]
     annot = profil_hm.values.astype(float).round(0)
- 
+
     fig = go.Figure(go.Heatmap(
         z=profil_norm.values.T,
         x=x_labels,
@@ -793,14 +805,14 @@ with tab4:
         xaxis=dict(tickangle=-15),
     )
     st.plotly_chart(fig, use_container_width=True)
- 
+
     # Perbandingan KPI — bar chart interaktif
     st.markdown("#### 📊 Perbandingan KPI Antar Cluster")
     kpi_cols = ['total_pemasukan','total_pengeluaran','sisa_uang',
                 'rasio_pengeluaran','hiburan','teknologi','financial_score']
     kpi_cols = [c for c in kpi_cols if c in fdf.columns]
     selected_kpi = st.selectbox("Pilih KPI:", kpi_cols, key="kpi_select")
- 
+
     kpi_vals = fdf.groupby('nama_cluster')[selected_kpi].mean().reset_index()
     kpi_vals.columns = ['Cluster', 'Nilai']
     fig = px.bar(
@@ -817,7 +829,7 @@ with tab4:
     fig.update_layout(**PLOTLY_LAYOUT, height=360, showlegend=False,
                       xaxis=dict(tickangle=-10, gridcolor='#e2e8f0'))
     st.plotly_chart(fig, use_container_width=True)
- 
+
     # Status distribusi per cluster
     st.markdown("#### 📊 Distribusi Status Finansial per Cluster")
     status_data = (
@@ -826,7 +838,7 @@ with tab4:
     )
     total_per_cl = status_data.groupby('nama_cluster')['Jumlah'].transform('sum')
     status_data['Persen'] = (status_data['Jumlah'] / total_per_cl * 100).round(1)
- 
+
     fig = px.bar(
         status_data, x='nama_cluster', y='Persen',
         color='status_finansial',
@@ -843,7 +855,7 @@ with tab4:
                       legend=dict(orientation='h', yanchor='bottom',
                                   y=-0.3, xanchor='center', x=0.5))
     st.plotly_chart(fig, use_container_width=True)
- 
+
     # Violin plot
     st.markdown("#### 🎻 Distribusi Financial Score per Cluster")
     fig = px.violin(
@@ -867,14 +879,14 @@ with tab4:
                       xaxis=dict(tickangle=-10, gridcolor='#e2e8f0'))
     st.plotly_chart(fig, use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
- 
+
 # ══════════════════════════════════════════════
 # TAB 5 — EXPORT
 # ══════════════════════════════════════════════
 with tab5:
     st.markdown('<div class="section-card"><div class="section-title">📥 Export & Ringkasan Akhir</div>'
                 '<div class="section-sub">Download hasil analisis lengkap</div>', unsafe_allow_html=True)
- 
+
     summary_rows = []
     for cl in cluster_list:
         subset  = fdf[fdf['cluster'] == cl]
@@ -891,7 +903,7 @@ with tab5:
             "Avg Expense":   fmt_rupiah(subset['total_pengeluaran'].mean()),
             "Avg Saving":    fmt_rupiah(subset['sisa_uang'].mean()),
             "Fin. Score":    f"{avg_sc:.1f}",
-            "Status Dominan": get_status(avg_sc),
+            "Status Dominan": make_status(avg_sc, meta['p25'], meta['p50'], meta['p75']),
             "% Bahaya":      f"{dist_pct['Bahaya']:.1f}%",
             "% Waspada":     f"{dist_pct['Waspada']:.1f}%",
             "% Stabil":      f"{dist_pct['Stabil']:.1f}%",
@@ -899,7 +911,7 @@ with tab5:
         })
     df_summary = pd.DataFrame(summary_rows)
     st.dataframe(df_summary, use_container_width=True, hide_index=True)
- 
+
     col1, col2 = st.columns(2)
     with col1:
         st.download_button(
@@ -917,7 +929,7 @@ with tab5:
             mime="text/csv",
             use_container_width=True,
         )
- 
+
     st.markdown(f"""
     <div class="insight-box">
     ✅ <b>Ringkasan Analisis:</b><br>
@@ -929,7 +941,7 @@ with tab5:
     </div>
     """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
- 
+
 # ── Footer ────────────────────────────────────
 st.markdown(
     '<div style="text-align:center;color:#94a3b8;font-size:.78rem;margin-top:1.5rem;">'
@@ -937,4 +949,3 @@ st.markdown(
     '</div>',
     unsafe_allow_html=True
 )
- 
