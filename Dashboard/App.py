@@ -1,33 +1,43 @@
+import os
+import warnings
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from pathlib import Path
 from plotly.subplots import make_subplots
-
+ 
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_score, davies_bouldin_score
+ 
+warnings.filterwarnings("ignore")
+ 
+# ─────────────────────────────────────────────
+# PAGE CONFIG
+# ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="Financial Clustering Dashboard",
+    page_title="Dashboard Finansial Mahasiswa 🎓",
     page_icon="💰",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
-
-# ── Custom CSS ──────────────────────────────────────────────────────────────
+ 
+# ─────────────────────────────────────────────
+# CUSTOM CSS  (light bg seperti versi 400 baris)
+# ─────────────────────────────────────────────
 st.markdown("""
 <style>
-/* Dark navy header */
-.main-header {
-    background: #0f172a;
-    color: white;
-    padding: 16px 28px;
-    margin: -1rem -1rem 1.5rem -1rem;
-    display: flex;
-    align-items: center;
-    gap: 12px;
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+ 
+html, body, [class*="css"] {
+    font-family: 'Plus Jakarta Sans', sans-serif;
 }
-.main-header h1 { font-size: 1.5rem; margin: 0; font-weight: 700; }
-.main-header span { font-size: 0.85rem; color: #94a3b8; }
-
-/* Metric cards */
+ 
+body { background: #f1f5f9 !important; }
+[data-testid="stAppViewContainer"] { background: #f1f5f9; }
+ 
 .metric-card {
     background: white;
     border-radius: 12px;
@@ -43,7 +53,7 @@ st.markdown("""
     margin-bottom: 6px;
 }
 .metric-card .value {
-    font-size: 1.75rem;
+    font-size: 1.6rem;
     font-weight: 800;
     color: #0f172a;
     line-height: 1.1;
@@ -53,8 +63,7 @@ st.markdown("""
     color: #94a3b8;
     margin-top: 4px;
 }
-
-/* Section cards */
+ 
 .section-card {
     background: white;
     border-radius: 12px;
@@ -66,81 +75,356 @@ st.markdown("""
     font-size: 1rem;
     font-weight: 700;
     color: #0f172a;
+    margin-bottom: 4px;
+}
+.section-sub {
+    font-size: 0.82rem;
+    color: #94a3b8;
     margin-bottom: 16px;
 }
-
-body { background: #f1f5f9 !important; }
-[data-testid="stAppViewContainer"] { background: #f1f5f9; }
-[data-testid="block-container"] { padding-top: 0; }
+ 
+.insight-box {
+    background: #eff6ff;
+    border-left: 4px solid #3b82f6;
+    border-radius: 0 10px 10px 0;
+    padding: 12px 16px;
+    font-size: 0.88rem;
+    color: #1e40af;
+    margin-top: 10px;
+}
+ 
+.badge-bahaya  { background:#ef4444; color:#fff; border-radius:6px; padding:2px 10px; font-size:12px; font-weight:700; }
+.badge-waspada { background:#f59e0b; color:#fff; border-radius:6px; padding:2px 10px; font-size:12px; font-weight:700; }
+.badge-stabil  { background:#3b82f6; color:#fff; border-radius:6px; padding:2px 10px; font-size:12px; font-weight:700; }
+.badge-sehat   { background:#22c55e; color:#fff; border-radius:6px; padding:2px 10px; font-size:12px; font-weight:700; }
+ 
+.stTabs [data-baseweb="tab"] { font-weight: 600; font-size: 14px; }
 </style>
 """, unsafe_allow_html=True)
-
-# ── Load Data ────────────────────────────────────────────────────────────────
-@st.cache_data
-def load_data():
-    df = df = pd.read_csv("https://github.com/BinQ-07/dashboard-capstone/blob/main/data/hasil_clustering_finansial_IDR.csv?raw=true")
-    return df
-
-df = load_data()
-
-# ── Header ───────────────────────────────────────────────────────────────────
-st.markdown("""
-<div class="main-header">
-    <div>
-        <h1>💰 Financial Clustering Dashboard</h1>
-        <span>Analisis Keuangan Mahasiswa · K-Means Clustering · IDR</span>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-# ── Sidebar Filters ──────────────────────────────────────────────────────────
+ 
+# ─────────────────────────────────────────────
+# CONSTANTS
+# ─────────────────────────────────────────────
+KURS_USD_IDR = 16_000
+RASIO = {
+    'pendidikan':     0.20,
+    'tempat_tinggal': 0.30,
+    'makanan':        0.35,
+    'transportasi':   0.30,
+    'buku':           0.40,
+    'hiburan':        0.30,
+    'perawatan':      0.35,
+    'teknologi':      0.45,
+    'kesehatan':      0.35,
+    'lainnya':        0.35,
+}
+STATUS_ORDER  = ["Bahaya", "Waspada", "Stabil", "Sangat Sehat"]
+STATUS_COLORS = {
+    "Bahaya":      "#ef4444",
+    "Waspada":     "#f59e0b",
+    "Stabil":      "#3b82f6",
+    "Sangat Sehat":"#22c55e",
+}
+CLUSTER_PALETTE = [
+    "#3b82f6","#f59e0b","#22c55e","#ef4444","#8b5cf6","#06b6d4"
+]
+ 
+# ─────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────
+def fmt_rupiah(val, short=True):
+    if pd.isna(val):
+        return "N/A"
+    if short:
+        if abs(val) >= 1_000_000:
+            return f"Rp {val/1_000_000:.1f}Jt"
+        elif abs(val) >= 1_000:
+            return f"Rp {val/1_000:.0f}rb"
+        return f"Rp {val:.0f}"
+    return f"Rp {val:,.0f}"
+ 
+def get_status_badge(status):
+    cls_map = {
+        "Bahaya": "bahaya", "Waspada": "waspada",
+        "Stabil": "stabil", "Sangat Sehat": "sehat"
+    }
+    return f'<span class="badge-{cls_map.get(status, "stabil")}">{status}</span>'
+ 
+# Plotly layout defaults (light theme, responsive)
+PLOTLY_LAYOUT = dict(
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font=dict(family="Plus Jakarta Sans, sans-serif", color="#334155"),
+    margin=dict(t=30, b=30, l=10, r=10),
+    xaxis=dict(gridcolor="#e2e8f0", showgrid=True),
+    yaxis=dict(gridcolor="#e2e8f0", showgrid=True),
+)
+ 
+# ─────────────────────────────────────────────
+# DATA LOADING — hanya cache DataFrame + angka,
+# TIDAK cache model sklearn (biang kelambatan)
+# ─────────────────────────────────────────────
+@st.cache_data(show_spinner=False)
+def load_and_process_data(file_key: str):
+    """
+    FIX utama: kembalikan hanya plain Python types + DataFrame.
+    Hindari menyimpan objek sklearn ke cache.
+    """
+    # ── baca ──
+    if file_key == "__default__":
+        df_raw = pd.read_csv("Data/student_spending (1).csv")
+    else:
+        df_raw = pd.read_csv(file_key)
+ 
+    # ── rename ──
+    df = df_raw.rename(columns={
+        'Unnamed: 0'     : 'id',
+        'age'            : 'usia',
+        'monthly_income' : 'pendapatan',
+        'financial_aid'  : 'bantuan',
+        'tuition'        : 'pendidikan',
+        'housing'        : 'tempat_tinggal',
+        'food'           : 'makanan',
+        'transportation' : 'transportasi',
+        'books_supplies' : 'buku',
+        'entertainment'  : 'hiburan',
+        'personal_care'  : 'perawatan',
+        'technology'     : 'teknologi',
+        'health_wellness': 'kesehatan',
+        'miscellaneous'  : 'lainnya',
+    })
+ 
+    # ── konversi USD → IDR ──
+    for col in ['pendapatan', 'bantuan']:
+        if col in df.columns:
+            df[col] = (df[col] * KURS_USD_IDR).round(0)
+ 
+    for col, r in RASIO.items():
+        if col in df.columns:
+            if col == 'pendidikan':
+                df[col] = (df[col] / 6 * KURS_USD_IDR * r).round(0)
+            else:
+                df[col] = (df[col] * KURS_USD_IDR * r).round(0)
+ 
+    # ── derived ──
+    df['total_pemasukan']   = df['pendapatan'] + df['bantuan']
+    df['total_pengeluaran'] = df[list(RASIO.keys())].sum(axis=1)
+    df['sisa_uang']         = df['total_pemasukan'] - df['total_pengeluaran']
+    df['rasio_pengeluaran'] = (
+        df['total_pengeluaran'] / df['total_pemasukan'].replace(0, np.nan)
+    )
+ 
+    # ── financial score ──
+    def hitung_score(row):
+        ti = row['total_pemasukan']
+        tp = row['total_pengeluaran']
+        rasio_tab = max(0, min(1, row['sisa_uang'] / ti)) if ti > 0 else 0
+        skor_a = rasio_tab * 100
+        esensial = row['tempat_tinggal'] + row['makanan'] + row['transportasi']
+        skor_b = (esensial / tp * 100) if tp > 0 else 50
+        buffer = max(0, min(1, row['sisa_uang'] / tp)) if tp > 0 else 0
+        skor_c = buffer * 100
+        return round(0.40*skor_a + 0.30*skor_b + 0.30*skor_c, 2)
+ 
+    df['financial_score'] = df.apply(hitung_score, axis=1)
+ 
+    p25 = float(df['financial_score'].quantile(0.25))
+    p50 = float(df['financial_score'].quantile(0.50))
+    p75 = float(df['financial_score'].quantile(0.75))
+ 
+    def get_status(s):
+        if s >= p75:  return "Sangat Sehat"
+        if s >= p50:  return "Stabil"
+        if s >= p25:  return "Waspada"
+        return "Bahaya"
+ 
+    df['status_finansial'] = df['financial_score'].apply(get_status)
+ 
+    # ── clustering ──
+    cat_cols = [c for c in df.select_dtypes('object').columns
+                if c not in ['status_finansial', 'nama_cluster']]
+    df_enc = df.copy()
+    for col in cat_cols:
+        le = LabelEncoder()
+        df_enc[col+'_enc'] = le.fit_transform(df_enc[col].astype(str))
+ 
+    fitur = (
+        ['total_pemasukan','total_pengeluaran','sisa_uang','rasio_pengeluaran',
+         'pendidikan','tempat_tinggal','makanan','transportasi','hiburan',
+         'teknologi','financial_score']
+        + [c+'_enc' for c in cat_cols if c+'_enc' in df_enc.columns]
+    )
+    fitur = [c for c in fitur if c in df_enc.columns]
+ 
+    X = df_enc[fitur].dropna()
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+ 
+    # Pilih k optimal (silhouette)
+    sil_scores = {}
+    for k in range(2, 7):
+        km = KMeans(n_clusters=k, init='k-means++', n_init=10, random_state=42)
+        km.fit(X_scaled)
+        sil_scores[k] = float(silhouette_score(X_scaled, km.labels_))
+    best_k = max(sil_scores, key=sil_scores.get)
+ 
+    kmeans = KMeans(n_clusters=best_k, init='k-means++', n_init=20, random_state=42)
+    kmeans.fit(X_scaled)
+ 
+    sil_val = float(silhouette_score(X_scaled, kmeans.labels_))
+    db_val  = float(davies_bouldin_score(X_scaled, kmeans.labels_))
+ 
+    df.loc[X.index, 'cluster'] = kmeans.labels_.astype(int)
+    df['cluster'] = df['cluster'].astype('Int64')
+ 
+    # PCA 2D — simpan sebagai list biasa (bukan numpy array)
+    pca = PCA(n_components=2, random_state=42)
+    X_pca = pca.fit_transform(X_scaled)
+    var_exp = [float(v*100) for v in pca.explained_variance_ratio_]
+ 
+    # Nama cluster
+    cluster_list = sorted(df['cluster'].dropna().unique().tolist())
+    kol = ['total_pemasukan','total_pengeluaran','sisa_uang',
+           'rasio_pengeluaran','financial_score']
+    kol = [c for c in kol if c in df.columns]
+    profil = df.groupby('cluster')[kol].mean().round(0)
+ 
+    sisa_rank  = profil['sisa_uang'].rank(ascending=False)
+    rasio_rank = profil['rasio_pengeluaran'].rank(ascending=True)
+    pend_rank  = profil['total_pemasukan'].rank(ascending=False)
+    n_cl = len(cluster_list)
+ 
+    nama_cluster = {}
+    for cl in cluster_list:
+        rs = sisa_rank[cl]; rr = rasio_rank[cl]; rp = pend_rank[cl]
+        if rs <= 1 and rp <= 1:
+            label = "Mapan & Hemat"
+        elif rs <= 1:
+            label = "Hemat"
+        elif rp <= 1 and rr >= n_cl:
+            label = "Penghasilan Tinggi & Boros"
+        elif rr >= n_cl:
+            label = "Boros / Defisit"
+        elif rp >= n_cl:
+            label = "Penghasilan Rendah"
+        else:
+            label = "Rata-rata"
+        nama_cluster[int(cl)] = f"Cluster {int(cl)}: {label}"
+ 
+    df['nama_cluster'] = df['cluster'].map(nama_cluster)
+ 
+    # Tambahkan kolom PCA ke df subset untuk scatter
+    pca_df = pd.DataFrame(
+        X_pca, index=X.index, columns=['PC1', 'PC2']
+    )
+    df = df.join(pca_df, how='left')
+ 
+    # Centroid PCA
+    centroids_pca = pca.transform(kmeans.cluster_centers_)
+    centroid_df = pd.DataFrame(centroids_pca, columns=['PC1','PC2'])
+    centroid_df['cluster'] = list(range(best_k))
+ 
+    meta = dict(
+        best_k=best_k,
+        sil=sil_val,
+        db=db_val,
+        profil=profil,
+        cluster_list=cluster_list,
+        nama_cluster=nama_cluster,
+        var_exp=var_exp,
+        p25=p25, p50=p50, p75=p75,
+        fitur=fitur,
+        sil_scores=sil_scores,
+        centroid_df=centroid_df,
+        get_status=get_status,   # fungsi ringan, tidak masalah
+    )
+    return df, meta
+ 
+# ─────────────────────────────────────────────
+# SIDEBAR
+# ─────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("## 🎓 Financial Dashboard")
+    st.markdown("**Clustering Finansial Mahasiswa**")
+    st.divider()
+ 
+    st.markdown("### 📂 Sumber Data")
+    DEFAULT_DATA_PATH = "Data/student_spending (1).csv"
+    uploaded_file = st.file_uploader("Upload CSV lain *(opsional)*", type=["csv"])
+    st.divider()
+    st.caption("Dashboard · Data: Kaggle Student Spending")
+ 
+# ─────────────────────────────────────────────
+# LOAD DATA
+# ─────────────────────────────────────────────
+st.markdown(
+    '<h1 style="font-size:1.8rem;font-weight:800;color:#0f172a;margin-bottom:4px;">'
+    '💰 Dashboard Finansial Mahasiswa Indonesia</h1>',
+    unsafe_allow_html=True
+)
+st.markdown(
+    '<p style="color:#64748b;font-size:0.95rem;margin-bottom:20px;">'
+    'Analisis K-Means Clustering · Konversi USD → IDR · Financial Health Score</p>',
+    unsafe_allow_html=True
+)
+ 
+if uploaded_file is not None:
+    uploaded_file.seek(0)
+    tmp_path = f"/tmp/{uploaded_file.name}"
+    with open(tmp_path, "wb") as f:
+        f.write(uploaded_file.read())
+    file_key = tmp_path
+elif os.path.exists(DEFAULT_DATA_PATH):
+    file_key = "__default__"
+else:
+    st.error(
+        f"⚠️ File **`{DEFAULT_DATA_PATH}`** tidak ditemukan. "
+        "Upload manual via sidebar."
+    )
+    st.stop()
+ 
+with st.spinner("⚙️ Memuat & memproses data..."):
+    df, meta = load_and_process_data(file_key)
+ 
+profil       = meta['profil']
+cluster_list = meta['cluster_list']
+nama_cluster = meta['nama_cluster']
+get_status   = meta['get_status']
+best_k       = meta['best_k']
+pengeluaran_cols = [c for c in list(RASIO.keys()) if c in df.columns]
+ 
+# ── Sidebar filters (setelah data loaded) ──
 with st.sidebar:
     st.markdown("### 🔍 Filter Data")
     cluster_filter = st.multiselect(
-        "Cluster",
-        options=df["nama_cluster"].unique(),
-        default=df["nama_cluster"].unique(),
+        "Cluster", options=df['nama_cluster'].dropna().unique().tolist(),
+        default=df['nama_cluster'].dropna().unique().tolist()
     )
-    gender_filter = st.multiselect(
-        "Gender",
-        options=df["gender"].unique(),
-        default=df["gender"].unique(),
-    )
-    year_filter = st.multiselect(
-        "Tahun Kuliah",
-        options=df["year_in_school"].unique(),
-        default=df["year_in_school"].unique(),
-    )
-
-fdf = df[
-    df["nama_cluster"].isin(cluster_filter) &
-    df["gender"].isin(gender_filter) &
-    df["year_in_school"].isin(year_filter)
+    gender_opts = df['gender'].dropna().unique().tolist() if 'gender' in df.columns else []
+    gender_filter = st.multiselect("Gender", options=gender_opts, default=gender_opts)
+ 
+    year_opts = df['year_in_school'].dropna().unique().tolist() if 'year_in_school' in df.columns else []
+    year_filter = st.multiselect("Tahun Kuliah", options=year_opts, default=year_opts)
+ 
+fdf = df[df['nama_cluster'].isin(cluster_filter)]
+if gender_opts:
+    fdf = fdf[fdf['gender'].isin(gender_filter)]
+if year_opts:
+    fdf = fdf[fdf['year_in_school'].isin(year_filter)]
+ 
+# ─────────────────────────────────────────────
+# KPI CARDS
+# ─────────────────────────────────────────────
+kpi_data = [
+    ("Total Mahasiswa", f"{len(fdf):,}", "responden"),
+    ("Cluster Optimal", str(best_k), "K-Means"),
+    ("Silhouette Score", f"{meta['sil']:.3f}", "kualitas cluster"),
+    ("Avg Pemasukan", fmt_rupiah(fdf['total_pemasukan'].mean()), "per bulan"),
+    ("Avg Sisa Uang", fmt_rupiah(fdf['sisa_uang'].mean()), "per bulan"),
+    ("Avg Fin. Score", f"{fdf['financial_score'].mean():.1f}", "dari 100"),
 ]
-
-# ── KPI Cards ────────────────────────────────────────────────────────────────
-total_students  = len(fdf)
-avg_income      = fdf["total_pemasukan"].mean()
-avg_expense     = fdf["total_pengeluaran"].mean()
-avg_savings     = fdf["sisa_uang"].mean()
-avg_fin_score   = fdf["financial_score"].mean()
-avg_ratio       = fdf["rasio_pengeluaran"].mean()
-
-def fmt_idr(val):
-    if val >= 1_000_000:
-        return f"Rp {val/1_000_000:.1f}Jt"
-    return f"Rp {val:,.0f}"
-
-col1, col2, col3, col4, col5, col6 = st.columns(6)
-metrics = [
-    (col1, "Total Mahasiswa",    f"{total_students:,}",       "responden"),
-    (col2, "Avg Pemasukan",      fmt_idr(avg_income),         "per bulan"),
-    (col3, "Avg Pengeluaran",    fmt_idr(avg_expense),        "per bulan"),
-    (col4, "Avg Sisa Uang",      fmt_idr(avg_savings),        "per bulan"),
-    (col5, "Avg Financial Score",f"{avg_fin_score:.1f}",      "dari 100"),
-    (col6, "Avg Rasio Belanja",  f"{avg_ratio*100:.1f}%",     "pengeluaran/pemasukan"),
-]
-for col, label, value, sub in metrics:
+cols = st.columns(len(kpi_data))
+for col, (label, value, sub) in zip(cols, kpi_data):
     with col:
         st.markdown(f"""
         <div class="metric-card">
@@ -148,241 +432,509 @@ for col, label, value, sub in metrics:
             <div class="value">{value}</div>
             <div class="sub">{sub}</div>
         </div>""", unsafe_allow_html=True)
-
+ 
 st.markdown("<br>", unsafe_allow_html=True)
-
-# ── Row 1: Cluster Distribution + Status Finansial ───────────────────────────
-col_a, col_b = st.columns(2)
-
-with col_a:
-    st.markdown('<div class="section-card"><div class="section-title">📊 Distribusi Cluster</div>', unsafe_allow_html=True)
-    cluster_counts = fdf["nama_cluster"].value_counts().reset_index()
-    cluster_counts.columns = ["Cluster", "Jumlah"]
-    fig_cluster = px.bar(
-        cluster_counts, x="Cluster", y="Jumlah",
-        color="Cluster",
-        color_discrete_sequence=["#3b82f6", "#f59e0b"],
-        text="Jumlah",
+ 
+# ─────────────────────────────────────────────
+# TABS
+# ─────────────────────────────────────────────
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📊 Overview", "🔍 EDA", "🤖 Clustering",
+    "🏷️ Profil Cluster", "📥 Export"
+])
+ 
+# ══════════════════════════════════════════════
+# TAB 1 — OVERVIEW
+# ══════════════════════════════════════════════
+with tab1:
+    st.markdown('<div class="section-card"><div class="section-title">📊 Ringkasan Kesehatan Finansial</div>'
+                '<div class="section-sub">Gambaran besar kondisi keuangan seluruh mahasiswa</div>', unsafe_allow_html=True)
+ 
+    col_left, col_right = st.columns(2)
+ 
+    with col_left:
+        dist_status = fdf['status_finansial'].value_counts().reindex(STATUS_ORDER, fill_value=0)
+        fig = px.pie(
+            values=dist_status.values,
+            names=dist_status.index,
+            color=dist_status.index,
+            color_discrete_map=STATUS_COLORS,
+            hole=0.45,
+            title="🩺 Distribusi Status Finansial",
+        )
+        fig.update_traces(textposition='outside', textinfo='percent+label')
+        fig.update_layout(**PLOTLY_LAYOUT, height=320, showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+ 
+    with col_right:
+        dist_pct = (dist_status / len(fdf) * 100).round(1)
+        fig = px.bar(
+            x=dist_status.values,
+            y=dist_status.index,
+            orientation='h',
+            color=dist_status.index,
+            color_discrete_map=STATUS_COLORS,
+            text=[f"{v} ({dist_pct[s]:.1f}%)" for s, v in zip(dist_status.index, dist_status.values)],
+            title="📈 Jumlah per Status",
+        )
+        fig.update_traces(textposition='outside')
+        fig.update_layout(**PLOTLY_LAYOUT, height=320, showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+ 
+    # Histogram financial score
+    fig = px.histogram(
+        fdf, x='financial_score', nbins=30,
+        color_discrete_sequence=['#6366f1'],
+        title="🎯 Distribusi Financial Health Score",
+        labels={'financial_score': 'Financial Health Score (0–100)', 'count': 'Frekuensi'},
+        marginal='rug',
     )
-    fig_cluster.update_traces(textposition="outside")
-    fig_cluster.update_layout(
-        showlegend=False, height=300,
-        margin=dict(t=10, b=10, l=0, r=0),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(showgrid=False),
-        yaxis=dict(showgrid=True, gridcolor="#f1f5f9"),
-    )
-    st.plotly_chart(fig_cluster, use_container_width=True)
+    mean_val = fdf['financial_score'].mean()
+    med_val  = fdf['financial_score'].median()
+    for xval, col_line, lbl in [
+        (mean_val, '#f59e0b', f'Mean: {mean_val:.1f}'),
+        (med_val,  '#10b981', f'Median: {med_val:.1f}'),
+        (meta['p25'], '#ef4444', f'P25: {meta["p25"]:.1f}'),
+        (meta['p75'], '#22c55e', f'P75: {meta["p75"]:.1f}'),
+    ]:
+        fig.add_vline(x=xval, line_dash='dash', line_color=col_line,
+                      annotation_text=lbl, annotation_position='top right',
+                      annotation_font_color=col_line)
+    fig.update_layout(**PLOTLY_LAYOUT, height=340)
+    st.plotly_chart(fig, use_container_width=True)
+ 
+    st.markdown(f"""
+    <div class="insight-box">
+    💡 <b>Interpretasi Score:</b> Financial Health Score dihitung dari 3 komponen:
+    40% rasio tabungan, 30% proporsi pengeluaran esensial, 30% buffer likuiditas.
+    Score rata-rata <b>{fdf['financial_score'].mean():.1f}/100</b>.
+    </div>
+    """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
-
-with col_b:
-    st.markdown('<div class="section-card"><div class="section-title">🏦 Status Finansial</div>', unsafe_allow_html=True)
-    status_counts = fdf["status_finansial"].value_counts().reset_index()
-    status_counts.columns = ["Status", "Jumlah"]
-    color_map = {
-        "Sangat Sehat": "#22c55e",
-        "Stabil": "#3b82f6",
-        "Waspada": "#f59e0b",
-        "Bahaya": "#ef4444",
-    }
-    fig_status = px.pie(
-        status_counts, values="Jumlah", names="Status",
-        color="Status", color_discrete_map=color_map,
-        hole=0.45,
-    )
-    fig_status.update_traces(textposition="outside", textinfo="percent+label")
-    fig_status.update_layout(
-        showlegend=False, height=300,
-        margin=dict(t=10, b=10, l=0, r=0),
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig_status, use_container_width=True)
+ 
+# ══════════════════════════════════════════════
+# TAB 2 — EDA
+# ══════════════════════════════════════════════
+with tab2:
+    st.markdown('<div class="section-card"><div class="section-title">🔍 Exploratory Data Analysis</div>'
+                '<div class="section-sub">Distribusi, korelasi, dan pola pengeluaran</div>', unsafe_allow_html=True)
+ 
+    eda_sub = st.selectbox("Pilih analisis:", [
+        "Distribusi Numerik", "Boxplot Pengeluaran",
+        "Komposisi Pengeluaran", "Matriks Korelasi",
+        "Distribusi Kategorikal"
+    ])
+ 
+    if eda_sub == "Distribusi Numerik":
+        numerik_cols = ['usia','pendapatan','bantuan','total_pemasukan',
+                        'total_pengeluaran','sisa_uang','rasio_pengeluaran','financial_score']
+        numerik_cols = [c for c in numerik_cols if c in fdf.columns]
+ 
+        # Plotly: 2 baris × 4 kolom, responsif otomatis
+        fig = make_subplots(
+            rows=2, cols=4,
+            subplot_titles=numerik_cols,
+            vertical_spacing=0.15,
+            horizontal_spacing=0.08,
+        )
+        for i, col in enumerate(numerik_cols):
+            r, c = divmod(i, 4)
+            data_col = fdf[col].dropna()
+            fig.add_trace(
+                go.Histogram(x=data_col, nbinsx=25, name=col,
+                             marker_color='#6366f1', opacity=0.75,
+                             showlegend=False),
+                row=r+1, col=c+1,
+            )
+            fig.add_vline(
+                x=float(data_col.mean()),
+                line_dash='dash', line_color='#ef4444',
+                row=r+1, col=c+1,
+            )
+            fig.add_vline(
+                x=float(data_col.median()),
+                line_dash='solid', line_color='#10b981',
+                row=r+1, col=c+1,
+            )
+        fig.update_layout(height=520, title_text="Distribusi Numerik  🔴 Mean  🟢 Median",
+                          **{k: v for k, v in PLOTLY_LAYOUT.items() if k not in ['xaxis','yaxis']},
+                          showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+ 
+    elif eda_sub == "Boxplot Pengeluaran":
+        fig = go.Figure()
+        for i, col in enumerate(pengeluaran_cols):
+            fig.add_trace(go.Box(
+                y=fdf[col].dropna(), name=col,
+                marker_color=px.colors.qualitative.Pastel[i % 10],
+                boxmean=True,
+            ))
+        fig.update_layout(
+            **PLOTLY_LAYOUT, height=420,
+            title="Boxplot Pengeluaran per Kategori (IDR)",
+            yaxis_title="IDR",
+            showlegend=False,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+ 
+    elif eda_sub == "Komposisi Pengeluaran":
+        rata = fdf[pengeluaran_cols].mean().sort_values(ascending=False)
+        col_l, col_r = st.columns(2)
+        with col_l:
+            fig = px.pie(values=rata.values, names=rata.index,
+                         title="Komposisi Pengeluaran (%)", hole=0.35)
+            fig.update_traces(textposition='outside', textinfo='percent+label')
+            fig.update_layout(**PLOTLY_LAYOUT, height=380, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+        with col_r:
+            fig = px.bar(
+                x=rata.values[::-1], y=rata.index[::-1],
+                orientation='h',
+                color=rata.values[::-1],
+                color_continuous_scale='Blues',
+                text=[fmt_rupiah(v) for v in rata.values[::-1]],
+                title="Rata-rata Pengeluaran per Kategori",
+            )
+            fig.update_traces(textposition='outside')
+            fig.update_layout(**PLOTLY_LAYOUT, height=380,
+                              coloraxis_showscale=False, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+ 
+    elif eda_sub == "Matriks Korelasi":
+        num_cols = fdf.drop(columns=['id'], errors='ignore').select_dtypes('number').columns
+        corr = fdf[num_cols].corr().round(2)
+        # Mask upper triangle
+        mask = np.triu(np.ones_like(corr, dtype=bool), k=1)
+        corr_masked = corr.where(~mask)
+        fig = px.imshow(
+            corr_masked,
+            text_auto=".2f",
+            color_continuous_scale='RdYlGn',
+            zmin=-1, zmax=1,
+            title="Matriks Korelasi Antar Variabel",
+            aspect="auto",
+        )
+        fig.update_layout(**PLOTLY_LAYOUT, height=560)
+        st.plotly_chart(fig, use_container_width=True)
+ 
+    else:  # Kategorikal
+        cat_cols_show = [c for c in fdf.select_dtypes('object').columns
+                         if c not in ['status_finansial', 'nama_cluster']]
+        if cat_cols_show:
+            selected_cat = st.selectbox("Pilih kolom:", cat_cols_show)
+            counts = fdf[selected_cat].value_counts().reset_index()
+            counts.columns = [selected_cat, 'Jumlah']
+            fig = px.bar(counts, x=selected_cat, y='Jumlah',
+                         color='Jumlah', color_continuous_scale='Blues',
+                         text='Jumlah',
+                         title=f"Distribusi {selected_cat}")
+            fig.update_traces(textposition='outside')
+            fig.update_layout(**PLOTLY_LAYOUT, height=360,
+                              coloraxis_showscale=False)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Tidak ada kolom kategorikal terdeteksi.")
+ 
     st.markdown('</div>', unsafe_allow_html=True)
-
-# ── Row 2: Spending Categories + Gender Distribution ─────────────────────────
-col_c, col_d = st.columns(2)
-
-with col_c:
-    st.markdown('<div class="section-card"><div class="section-title">💸 Rata-rata Pengeluaran per Kategori</div>', unsafe_allow_html=True)
-    cats = {
-        "Tempat Tinggal": "tempat_tinggal",
-        "Pendidikan":     "pendidikan",
-        "Makanan":        "makanan",
-        "Teknologi":      "teknologi",
-        "Buku":           "buku",
-        "Kesehatan":      "kesehatan",
-        "Transportasi":   "transportasi",
-        "Lainnya":        "lainnya",
-        "Hiburan":        "hiburan",
-        "Perawatan":      "perawatan",
-    }
-    cat_means = {k: fdf[v].mean() for k, v in cats.items()}
-    cat_df = pd.DataFrame({"Kategori": list(cat_means.keys()), "Rata-rata (Rp)": list(cat_means.values())})
-    cat_df = cat_df.sort_values("Rata-rata (Rp)", ascending=True)
-    fig_cat = px.bar(
-        cat_df, x="Rata-rata (Rp)", y="Kategori",
-        orientation="h",
-        color="Rata-rata (Rp)",
-        color_continuous_scale="Blues",
-        text=cat_df["Rata-rata (Rp)"].apply(lambda x: f"Rp{x/1e6:.2f}Jt"),
-    )
-    fig_cat.update_traces(textposition="outside")
-    fig_cat.update_layout(
-        showlegend=False, height=340,
-        margin=dict(t=10, b=10, l=0, r=80),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        coloraxis_showscale=False,
-        xaxis=dict(showgrid=True, gridcolor="#f1f5f9"),
-        yaxis=dict(showgrid=False),
-    )
-    st.plotly_chart(fig_cat, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-with col_d:
-    st.markdown('<div class="section-card"><div class="section-title">👥 Distribusi Gender per Cluster</div>', unsafe_allow_html=True)
-    gender_cluster = fdf.groupby(["nama_cluster", "gender"]).size().reset_index(name="Jumlah")
-    fig_gender = px.bar(
-        gender_cluster, x="nama_cluster", y="Jumlah", color="gender",
-        barmode="group",
-        color_discrete_sequence=["#3b82f6", "#ec4899", "#a855f7"],
-        labels={"nama_cluster": "Cluster", "gender": "Gender"},
-    )
-    fig_gender.update_layout(
-        height=340,
-        margin=dict(t=10, b=10, l=0, r=0),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(showgrid=False),
-        yaxis=dict(showgrid=True, gridcolor="#f1f5f9"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    )
-    st.plotly_chart(fig_gender, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# ── Row 3: Payment Method + Financial Score Distribution ─────────────────────
-col_e, col_f = st.columns(2)
-
-with col_e:
-    st.markdown('<div class="section-card"><div class="section-title">💳 Metode Pembayaran</div>', unsafe_allow_html=True)
-    pay_counts = fdf["preferred_payment_method"].value_counts().reset_index()
-    pay_counts.columns = ["Metode", "Jumlah"]
-    fig_pay = px.pie(
-        pay_counts, values="Jumlah", names="Metode",
-        color_discrete_sequence=["#06b6d4", "#6366f1", "#f59e0b"],
-        hole=0.4,
-    )
-    fig_pay.update_traces(textposition="outside", textinfo="percent+label")
-    fig_pay.update_layout(
-        height=300,
-        margin=dict(t=10, b=10, l=0, r=0),
-        paper_bgcolor="rgba(0,0,0,0)",
-        showlegend=False,
-    )
-    st.plotly_chart(fig_pay, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-with col_f:
-    st.markdown('<div class="section-card"><div class="section-title">📈 Distribusi Financial Score per Cluster</div>', unsafe_allow_html=True)
-    fig_box = px.box(
-        fdf, x="nama_cluster", y="financial_score",
-        color="nama_cluster",
-        color_discrete_sequence=["#3b82f6", "#f59e0b"],
-        labels={"nama_cluster": "Cluster", "financial_score": "Financial Score"},
-        points="outliers",
-    )
-    fig_box.update_layout(
-        showlegend=False, height=300,
-        margin=dict(t=10, b=10, l=0, r=0),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(showgrid=False),
-        yaxis=dict(showgrid=True, gridcolor="#f1f5f9"),
-    )
-    st.plotly_chart(fig_box, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# ── Row 4: Year in School + Income vs Expense Scatter ────────────────────────
-col_g, col_h = st.columns(2)
-
-with col_g:
-    st.markdown('<div class="section-card"><div class="section-title">🎓 Distribusi Tahun Kuliah per Cluster</div>', unsafe_allow_html=True)
-    year_order = ["Freshman", "Sophomore", "Junior", "Senior"]
-    year_cluster = fdf.groupby(["year_in_school", "nama_cluster"]).size().reset_index(name="Jumlah")
-    fig_year = px.bar(
-        year_cluster, x="year_in_school", y="Jumlah", color="nama_cluster",
-        barmode="stack",
-        color_discrete_sequence=["#3b82f6", "#f59e0b"],
-        category_orders={"year_in_school": year_order},
-        labels={"year_in_school": "Tahun Kuliah", "nama_cluster": "Cluster"},
-    )
-    fig_year.update_layout(
-        height=300,
-        margin=dict(t=10, b=10, l=0, r=0),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(showgrid=False),
-        yaxis=dict(showgrid=True, gridcolor="#f1f5f9"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    )
-    st.plotly_chart(fig_year, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-with col_h:
-    st.markdown('<div class="section-card"><div class="section-title">🔵 Pemasukan vs Pengeluaran</div>', unsafe_allow_html=True)
-    fig_scatter = px.scatter(
-        fdf.sample(min(400, len(fdf)), random_state=42),
-        x="total_pemasukan", y="total_pengeluaran",
-        color="nama_cluster",
-        color_discrete_sequence=["#3b82f6", "#f59e0b"],
-        opacity=0.6,
-        labels={
-            "total_pemasukan": "Total Pemasukan (Rp)",
-            "total_pengeluaran": "Total Pengeluaran (Rp)",
-            "nama_cluster": "Cluster",
+ 
+# ══════════════════════════════════════════════
+# TAB 3 — CLUSTERING
+# ══════════════════════════════════════════════
+with tab3:
+    st.markdown('<div class="section-card"><div class="section-title">🤖 Proses Clustering K-Means</div>'
+                '<div class="section-sub">Seleksi cluster optimal, visualisasi PCA, dan metrik evaluasi</div>',
+                unsafe_allow_html=True)
+ 
+    col_a, col_b = st.columns(2)
+ 
+    with col_a:
+        k_range = sorted(meta['sil_scores'].keys())
+        sil_vals = [meta['sil_scores'][k] for k in k_range]
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=k_range, y=sil_vals,
+            mode='lines+markers',
+            line=dict(color='#10b981', width=2.5),
+            marker=dict(size=9, color='white', line=dict(color='#10b981', width=2.5)),
+            fill='tozeroy', fillcolor='rgba(16,185,129,0.12)',
+            name='Silhouette Score',
+        ))
+        fig.add_vline(x=best_k, line_dash='dash', line_color='#ef4444',
+                      annotation_text=f'Optimal k={best_k}',
+                      annotation_font_color='#ef4444')
+        fig.update_layout(
+            **PLOTLY_LAYOUT, height=300,
+            title=f"📐 Silhouette Score per K (Best k={best_k})",
+            xaxis_title="Jumlah Cluster (k)",
+            yaxis_title="Silhouette Score",
+            xaxis=dict(tickmode='array', tickvals=list(k_range), gridcolor='#e2e8f0'),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+ 
+    with col_b:
+        ev_data = {
+            "Metrik": ["Jumlah Cluster (k)", "Silhouette Score",
+                       "Davies-Bouldin Index", "Total Data", "Fitur"],
+            "Nilai":  [str(best_k), f"{meta['sil']:.4f}",
+                       f"{meta['db']:.4f}", str(len(df)), str(len(meta['fitur']))],
+            "Keterangan": ["Segmen mahasiswa", "→1 makin baik",
+                           "→0 makin baik", "Data valid (non-null)", "Dimensi input"],
+        }
+        st.markdown("#### 📊 Evaluasi Model")
+        st.dataframe(pd.DataFrame(ev_data), use_container_width=True, hide_index=True)
+ 
+    # PCA scatter — pakai kolom yang sudah ada di df
+    pca_df_plot = fdf.dropna(subset=['PC1','PC2','nama_cluster'])
+    fig = px.scatter(
+        pca_df_plot,
+        x='PC1', y='PC2',
+        color='nama_cluster',
+        color_discrete_sequence=CLUSTER_PALETTE,
+        opacity=0.65,
+        hover_data={
+            'financial_score': ':.1f',
+            'status_finansial': True,
+            'PC1': False, 'PC2': False,
         },
+        title=f"🔵 PCA 2D — PC1: {meta['var_exp'][0]:.1f}%  ·  PC2: {meta['var_exp'][1]:.1f}% variasi",
+        labels={'PC1': f"PC1 ({meta['var_exp'][0]:.1f}%)",
+                'PC2': f"PC2 ({meta['var_exp'][1]:.1f}%)",
+                'nama_cluster': 'Cluster'},
     )
-    # 45-degree reference line
-    max_val = fdf[["total_pemasukan", "total_pengeluaran"]].max().max()
-    fig_scatter.add_shape(
-        type="line", x0=0, y0=0, x1=max_val, y1=max_val,
-        line=dict(color="#ef4444", dash="dash", width=1.5),
-    )
-    fig_scatter.update_layout(
-        height=300,
-        margin=dict(t=10, b=10, l=0, r=0),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(showgrid=True, gridcolor="#f1f5f9"),
-        yaxis=dict(showgrid=True, gridcolor="#f1f5f9"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    )
-    st.plotly_chart(fig_scatter, use_container_width=True)
+    # Tambah centroid
+    c_df = meta['centroid_df']
+    c_df_labeled = c_df.copy()
+    c_df_labeled['label'] = c_df_labeled['cluster'].map(nama_cluster)
+    fig.add_trace(go.Scatter(
+        x=c_df['PC1'], y=c_df['PC2'],
+        mode='markers',
+        marker=dict(symbol='x', size=16, color='black',
+                    line=dict(width=2, color='white')),
+        name='Pusat Cluster',
+        hovertext=c_df_labeled['label'],
+        hoverinfo='text',
+    ))
+    fig.update_layout(**PLOTLY_LAYOUT, height=440,
+                      legend=dict(orientation='h', yanchor='bottom',
+                                  y=-0.25, xanchor='center', x=0.5))
+    st.plotly_chart(fig, use_container_width=True)
+ 
+    st.markdown(f"""
+    <div class="insight-box">
+    💡 <b>Tentang PCA:</b> PC1 + PC2 menjelaskan
+    <b>{meta['var_exp'][0]+meta['var_exp'][1]:.1f}%</b> total variasi.
+    Titik = 1 mahasiswa. Hover untuk detail. ✕ = pusat cluster.
+    </div>
+    """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
-
-# ── Row 5: Comparison Table ───────────────────────────────────────────────────
-st.markdown('<div class="section-card"><div class="section-title">📋 Ringkasan Per Cluster</div>', unsafe_allow_html=True)
-summary = fdf.groupby("nama_cluster").agg(
-    Jumlah=("id", "count"),
-    Avg_Pemasukan=("total_pemasukan", "mean"),
-    Avg_Pengeluaran=("total_pengeluaran", "mean"),
-    Avg_Sisa=("sisa_uang", "mean"),
-    Avg_Score=("financial_score", "mean"),
-    Avg_Rasio=("rasio_pengeluaran", "mean"),
-).reset_index()
-summary.columns = ["Cluster", "Jumlah", "Avg Pemasukan", "Avg Pengeluaran", "Avg Sisa Uang", "Avg Score", "Avg Rasio"]
-summary["Avg Pemasukan"]    = summary["Avg Pemasukan"].apply(lambda x: f"Rp {x:,.0f}")
-summary["Avg Pengeluaran"]  = summary["Avg Pengeluaran"].apply(lambda x: f"Rp {x:,.0f}")
-summary["Avg Sisa Uang"]    = summary["Avg Sisa Uang"].apply(lambda x: f"Rp {x:,.0f}")
-summary["Avg Score"]        = summary["Avg Score"].apply(lambda x: f"{x:.1f}")
-summary["Avg Rasio"]        = summary["Avg Rasio"].apply(lambda x: f"{x*100:.1f}%")
-st.dataframe(summary, use_container_width=True, hide_index=True)
-st.markdown('</div>', unsafe_allow_html=True)
-
-# ── Footer ───────────────────────────────────────────────────────────────────
-st.markdown("""
-<div style="text-align:center; color:#94a3b8; font-size:0.78rem; margin-top:1rem;">
-    Financial Clustering Dashboard · K-Means (n=2) · Data Mahasiswa IDR
-</div>
-""", unsafe_allow_html=True)
+ 
+# ══════════════════════════════════════════════
+# TAB 4 — PROFIL CLUSTER
+# ══════════════════════════════════════════════
+with tab4:
+    st.markdown('<div class="section-card"><div class="section-title">🏷️ Profil & Karakteristik Cluster</div>'
+                '<div class="section-sub">Ringkasan mendalam setiap segmen mahasiswa</div>',
+                unsafe_allow_html=True)
+ 
+    # Summary cards
+    cols_cards = st.columns(len(cluster_list))
+    for col, cl in zip(cols_cards, cluster_list):
+        subset  = fdf[fdf['cluster'] == cl]
+        avg_sc  = subset['financial_score'].mean() if len(subset) > 0 else 0
+        status  = get_status(avg_sc)
+        color   = CLUSTER_PALETTE[int(cl) % len(CLUSTER_PALETTE)]
+        with col:
+            st.markdown(f"""
+            <div style="background:white;border-top:4px solid {color};
+                        border-radius:10px;padding:16px;text-align:center;
+                        box-shadow:0 1px 4px rgba(0,0,0,.08);">
+                <div style="font-size:11px;color:#94a3b8;font-weight:700;
+                            letter-spacing:.08em;text-transform:uppercase;">
+                    Cluster {int(cl)}</div>
+                <div style="font-size:14px;font-weight:800;color:{color};
+                            margin:6px 0;line-height:1.3;">
+                    {nama_cluster[int(cl)].replace(f"Cluster {int(cl)}: ","")}</div>
+                <div style="font-size:12px;color:#94a3b8;">{len(subset)} mahasiswa</div>
+                <div style="margin-top:8px;">{get_status_badge(status)}</div>
+                <div style="font-size:12px;color:#64748b;margin-top:4px;">Score: {avg_sc:.1f}</div>
+            </div>
+            """, unsafe_allow_html=True)
+ 
+    st.markdown("<br>", unsafe_allow_html=True)
+ 
+    # Heatmap profil (Plotly — interaktif, teks tidak terpotong)
+    kolom_hm = [c for c in ['total_pemasukan','total_pengeluaran','sisa_uang',
+                             'rasio_pengeluaran','pendidikan','tempat_tinggal',
+                             'makanan','hiburan','teknologi','financial_score']
+                if c in profil.columns]
+    profil_hm   = profil[kolom_hm]
+    profil_norm = ((profil_hm - profil_hm.mean()) / profil_hm.std()).round(2)
+ 
+    x_labels = [nama_cluster.get(int(c), f"Cluster {int(c)}") for c in profil_hm.index]
+    annot = profil_hm.values.astype(float).round(0)
+ 
+    fig = go.Figure(go.Heatmap(
+        z=profil_norm.values.T,
+        x=x_labels,
+        y=kolom_hm,
+        text=[[fmt_rupiah(v) if col not in ['rasio_pengeluaran','financial_score']
+               else f"{v:.2f}"
+               for v in row]
+              for col, row in zip(kolom_hm, annot.T)],
+        texttemplate="%{text}",
+        colorscale='RdYlGn',
+        zmin=-2, zmax=2,
+        colorbar=dict(title="Z-score"),
+        hoverongaps=False,
+    ))
+    fig.update_layout(
+        **PLOTLY_LAYOUT, height=400,
+        title="🗺️ Heatmap Profil Rata-rata per Cluster",
+        xaxis=dict(tickangle=-15),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+ 
+    # Perbandingan KPI — bar chart interaktif
+    st.markdown("#### 📊 Perbandingan KPI Antar Cluster")
+    kpi_cols = ['total_pemasukan','total_pengeluaran','sisa_uang',
+                'rasio_pengeluaran','hiburan','teknologi','financial_score']
+    kpi_cols = [c for c in kpi_cols if c in fdf.columns]
+    selected_kpi = st.selectbox("Pilih KPI:", kpi_cols, key="kpi_select")
+ 
+    kpi_vals = fdf.groupby('nama_cluster')[selected_kpi].mean().reset_index()
+    kpi_vals.columns = ['Cluster', 'Nilai']
+    fig = px.bar(
+        kpi_vals, x='Cluster', y='Nilai',
+        color='Cluster',
+        color_discrete_sequence=CLUSTER_PALETTE,
+        text=kpi_vals['Nilai'].apply(
+            lambda v: f"{v:.2f}" if selected_kpi in ['rasio_pengeluaran','financial_score']
+            else fmt_rupiah(v)
+        ),
+        title=f"Rata-rata {selected_kpi} per Cluster",
+    )
+    fig.update_traces(textposition='outside')
+    fig.update_layout(**PLOTLY_LAYOUT, height=360, showlegend=False,
+                      xaxis=dict(tickangle=-10, gridcolor='#e2e8f0'))
+    st.plotly_chart(fig, use_container_width=True)
+ 
+    # Status distribusi per cluster
+    st.markdown("#### 📊 Distribusi Status Finansial per Cluster")
+    status_data = (
+        fdf.groupby(['nama_cluster','status_finansial'])
+        .size().reset_index(name='Jumlah')
+    )
+    total_per_cl = status_data.groupby('nama_cluster')['Jumlah'].transform('sum')
+    status_data['Persen'] = (status_data['Jumlah'] / total_per_cl * 100).round(1)
+ 
+    fig = px.bar(
+        status_data, x='nama_cluster', y='Persen',
+        color='status_finansial',
+        color_discrete_map=STATUS_COLORS,
+        text=status_data['Persen'].apply(lambda x: f"{x:.0f}%"),
+        barmode='stack',
+        labels={'nama_cluster': 'Cluster', 'Persen': 'Persentase (%)'},
+        category_orders={'status_finansial': STATUS_ORDER},
+        title="Proporsi Status Finansial per Cluster",
+    )
+    fig.update_traces(textposition='inside', insidetextanchor='middle')
+    fig.update_layout(**PLOTLY_LAYOUT, height=380,
+                      xaxis=dict(tickangle=-10, gridcolor='#e2e8f0'),
+                      legend=dict(orientation='h', yanchor='bottom',
+                                  y=-0.3, xanchor='center', x=0.5))
+    st.plotly_chart(fig, use_container_width=True)
+ 
+    # Violin plot
+    st.markdown("#### 🎻 Distribusi Financial Score per Cluster")
+    fig = px.violin(
+        fdf.dropna(subset=['cluster','financial_score']),
+        x='nama_cluster', y='financial_score',
+        color='nama_cluster',
+        color_discrete_sequence=CLUSTER_PALETTE,
+        box=True, points='outliers',
+        labels={'nama_cluster': 'Cluster', 'financial_score': 'Financial Health Score'},
+        title="Violin Plot Financial Score per Cluster",
+    )
+    for th_val, th_col, th_lbl in [
+        (meta['p25'], '#ef4444', f'Bahaya↔Waspada ({meta["p25"]:.1f})'),
+        (meta['p50'], '#f59e0b', f'Waspada↔Stabil ({meta["p50"]:.1f})'),
+        (meta['p75'], '#22c55e', f'Stabil↔Sehat ({meta["p75"]:.1f})'),
+    ]:
+        fig.add_hline(y=th_val, line_dash='dash', line_color=th_col,
+                      annotation_text=th_lbl, annotation_position='right',
+                      annotation_font_color=th_col)
+    fig.update_layout(**PLOTLY_LAYOUT, height=400, showlegend=False,
+                      xaxis=dict(tickangle=-10, gridcolor='#e2e8f0'))
+    st.plotly_chart(fig, use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+ 
+# ══════════════════════════════════════════════
+# TAB 5 — EXPORT
+# ══════════════════════════════════════════════
+with tab5:
+    st.markdown('<div class="section-card"><div class="section-title">📥 Export & Ringkasan Akhir</div>'
+                '<div class="section-sub">Download hasil analisis lengkap</div>', unsafe_allow_html=True)
+ 
+    summary_rows = []
+    for cl in cluster_list:
+        subset  = fdf[fdf['cluster'] == cl]
+        avg_sc  = subset['financial_score'].mean() if len(subset) > 0 else 0
+        dist_pct = (
+            subset['status_finansial']
+            .value_counts(normalize=True)
+            .reindex(STATUS_ORDER, fill_value=0) * 100
+        )
+        summary_rows.append({
+            "Cluster":       nama_cluster.get(int(cl), f"Cluster {int(cl)}"),
+            "Jumlah":        len(subset),
+            "Avg Income":    fmt_rupiah(subset['total_pemasukan'].mean()),
+            "Avg Expense":   fmt_rupiah(subset['total_pengeluaran'].mean()),
+            "Avg Saving":    fmt_rupiah(subset['sisa_uang'].mean()),
+            "Fin. Score":    f"{avg_sc:.1f}",
+            "Status Dominan": get_status(avg_sc),
+            "% Bahaya":      f"{dist_pct['Bahaya']:.1f}%",
+            "% Waspada":     f"{dist_pct['Waspada']:.1f}%",
+            "% Stabil":      f"{dist_pct['Stabil']:.1f}%",
+            "% Sangat Sehat":f"{dist_pct['Sangat Sehat']:.1f}%",
+        })
+    df_summary = pd.DataFrame(summary_rows)
+    st.dataframe(df_summary, use_container_width=True, hide_index=True)
+ 
+    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button(
+            "📥 Download Dataset Lengkap (CSV)",
+            data=fdf.drop(columns=['PC1','PC2'], errors='ignore').to_csv(index=False).encode('utf-8'),
+            file_name="hasil_clustering_finansial_IDR.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    with col2:
+        st.download_button(
+            "📥 Download Ringkasan Cluster (CSV)",
+            data=df_summary.to_csv(index=False).encode('utf-8'),
+            file_name="ringkasan_cluster_finansial.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+ 
+    st.markdown(f"""
+    <div class="insight-box">
+    ✅ <b>Ringkasan Analisis:</b><br>
+    • Dataset: <b>{len(df):,} mahasiswa</b> · Kurs: 1 USD = Rp {KURS_USD_IDR:,}<br>
+    • Algoritma: KMeans (k={best_k}) · Silhouette={meta['sil']:.4f} · Davies-Bouldin={meta['db']:.4f}<br>
+    • Fitur: {len(meta['fitur'])} variabel · Data difilter: {len(fdf):,} mahasiswa<br>
+    • Kolom output: <code>cluster</code>, <code>nama_cluster</code>,
+      <code>financial_score</code>, <code>status_finansial</code>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+ 
+# ── Footer ────────────────────────────────────
+st.markdown(
+    '<div style="text-align:center;color:#94a3b8;font-size:.78rem;margin-top:1.5rem;">'
+    f'Financial Clustering Dashboard · K-Means (k={best_k}) · Data Mahasiswa IDR'
+    '</div>',
+    unsafe_allow_html=True
+)
+ 
