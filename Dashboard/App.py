@@ -348,7 +348,7 @@ with st.sidebar:
     DEFAULT_DATA_PATH = "Data/student_spending (1).csv"
     uploaded_file = st.file_uploader("Upload CSV lain *(opsional)*", type=["csv"])
     st.divider()
-    st.caption("Dashboard · Data: Kaggle Student Spending · Kurs Rp16,000/USD")
+    st.caption(f"Dashboard · Data: Kaggle Student Spending · Kurs Rp{KURS_USD_IDR:,}/USD")
 
 # ── HEADER ─────────────────────────────────────────────────────────────────────
 st.markdown(
