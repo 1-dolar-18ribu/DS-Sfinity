@@ -54,7 +54,7 @@ html, body, [class*="css"] {
     margin-bottom: 6px;
 }
 .metric-card .value {
-    font-size: 28px;
+    font-size: 22px;
     font-weight: 800;
     color: #f1f5f9;
     font-family: 'JetBrains Mono', monospace;
