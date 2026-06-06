@@ -603,7 +603,7 @@ with tab2:
         fig.update_layout(**PL, height=580, margin=dict(t=45,b=15,l=15,r=15))
         st.plotly_chart(fig, use_container_width=True)
 
-else:  # Kategorikal
+    else:  # Kategorikal
         cat_cols_show = [c for c in fdf.select_dtypes('object').columns
                          if c not in ['status_finansial', 'nama_cluster']]
         if cat_cols_show:
