@@ -364,7 +364,7 @@ st.markdown('<h1 style="font-family:Plus Jakarta Sans;font-size:36px;font-weight
 st.markdown('<p style="color:#94a3b8;font-size:16px;margin-bottom:24px;">Analisis Clustering K-Means · Konversi USD → IDR · Financial Health Score</p>', unsafe_allow_html=True)
 
 # ─── Tentukan sumber data ───
-DEFAULT_DATA_PATH = "hasil_clustering_finansial_IDR.csv"
+DEFAULT_DATA_PATH = "Data/student_spending (1).csv"
 
 if uploaded_file is not None:
     data_source = uploaded_file
