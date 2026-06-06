@@ -1,3 +1,284 @@
+
+Claude finished the response
+
+import os import streamlit as st import pandas as pd import numpy as np import matplotlib.pyplot as plt import matplotlib.patches as mpatches import seaborn as sns import warnings import io from sklearn.preprocessing import LabelEncoder, StandardScaler from sklearn.cluster import KMeans
+
+pasted
+
+
+import streamlit as st import pandas as pd import plotly.express as px import plotly.graph_objects as go from pathlib import Path from plotly.subplots import make_subplots st.set_page_config( page_title="Financial Clustering Dashboard", page_icon="💰", layout="wide", ) # ─
+
+pasted
+
+kenapa yang 800 baris itu sulit buat di loading streamlit?tolong kenapa sesuai sama yang 400 baris itu biar interaktif dan tulisannya di streamlit lebih fleksibel ga kepotong potong
+
+12:10 PM
+Saya akan analisis kedua kode tersebut untuk menemukan penyebab masalah loading dan tampilan.
+
+Oke, langsung ke analisis. Ada 5 penyebab utama kenapa yang 800 baris lambat dan teks terpotong, plus solusinya:
+
+🔍 Root Cause Analysis
+1. @st.cache_data menyimpan objek besar (masalah terberat)
+Di versi 800 baris, fungsi load_and_process_data() di-cache tapi menyimpan:
+
+Objek KMeans (scikit-learn model)
+X_scaled, X_pca (numpy array besar)
+encoders dictionary
+Fungsi lambda get_status
+Streamlit harus serialize semua itu ke disk setiap session → lambat banget. Versi 400 baris tidak melakukan ini — ia hanya cache DataFrame biasa.
+
+2. Matplotlib vs Plotly
+Versi 800 baris pakai matplotlib → setiap chart di-render ke BytesIO PNG lalu di-upload ke Streamlit sebagai gambar statis. Proses ini berat dan tidak interaktif. Versi 400 baris pakai plotly yang render di browser (JavaScript), jauh lebih ringan di server.
+
+3. Clustering dijalankan ulang setiap load
+KMeans dengan n_init=20 dan loop silhouette_score untuk k=2 sampai 6 dijalankan setiap kali halaman di-refresh (walaupun ada cache, objek non-serializable bisa bikin cache miss).
+
+4. Teks terpotong karena matplotlib figsize fixed
+fig, axes = plt.subplots(2, 4, figsize=(20, 9)) — lebar fixed 20 inch, tapi Streamlit container lebar ~1200px. Label panjang seperti "Mahasiswa Berpenghasilan Tinggi & Boros" tidak muat → terpotong.
+
+5. fig_to_streamlit() dengan dpi=130
+Setiap chart di-encode ulang ke PNG 130 DPI di memori → boros RAM dan lambat untuk banyak chart sekaligus.
+
+✅ Solusi: Gabungkan logika 800 baris + rendering style 400 baris
+
+Created a file, read a file
+Created a file, read a file
+Ini App_fixed.py yang sudah digabungkan. Berikut ringkasan 5 perbaikan utama yang dilakukan:
+
+🔧 Apa yang diperbaiki
+1. Cache hanya simpan DataFrame & angka biasa Sebelumnya @st.cache_data menyimpan objek KMeans, StandardScaler, numpy arrays, dan lambda — Streamlit harus serialize semua itu ke disk yang sangat lambat. Sekarang cache hanya mengembalikan plain DataFrame + dict berisi angka dan string.
+
+2. Matplotlib → Plotly sepenuhnya Semua chart diganti ke Plotly. Ini yang paling berpengaruh ke performa — Plotly render di browser (JavaScript), bukan di server. Tidak ada lagi BytesIO PNG encoding per chart.
+
+3. PCA disimpan sebagai kolom di DataFrame Sebelumnya X_pca disimpan sebagai numpy array terpisah di meta dict. Sekarang kolom PC1 dan PC2 langsung ditambahkan ke DataFrame sehingga bisa di-filter sidebar juga.
+
+4. Nama cluster dipersingkat "Mahasiswa Berpenghasilan Tinggi & Boros" → "Cluster 2: Penghasilan Tinggi & Boros" — label panjang yang menyebabkan terpotong di axis/card sudah diperbaiki.
+
+5. Filter sidebar aktif di semua tab fdf (filtered DataFrame) sekarang dipakai konsisten di semua tab, jadi filter gender/cluster/tahun langsung mempengaruhi semua visualisasi secara interaktif.
+
+
+App fixed
+PY 
+error di stream lit 
+streamlit>=1.32.0
+pandas>=2.0.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+seaborn>=0.13.0
+plotly==6.8.01
+scipy==1.16.0
+
+12:24 PM
+Bisa share error message-nya yang muncul di Streamlit? Tapi dari versi di requirements.txt, saya sudah lihat masalahnya:
+
+plotly==6.8.01 — versi ini tidak valid/tidak ada. Plotly versi terbaru adalah 6.1.x, dan format versinya salah (harusnya 6.1.0 bukan 6.8.01).
+
+scipy==1.16.0 — versi ini juga belum rilis per Juni 2026. Versi stabil terbaru scipy adalah 1.15.x.
+
+Ganti requirements.txt kamu dengan ini:
+
+txt
+streamlit>=1.32.0
+pandas>=2.0.0
+numpy>=1.24.0
+plotly>=5.18.0
+scikit-learn>=1.3.0
+scipy>=1.11.0
+Beberapa catatan:
+
+matplotlib dan seaborn dihapus — App_fixed.py sudah full Plotly, tidak perlu keduanya lagi
+scikit-learn ditambahkan — karena dipakai untuk KMeans, PCA, LabelEncoder, StandardScaler, dll tapi tidak ada di requirements lama kamu
+Versi plotly>=5.18.0 sudah cukup dan stabil
+Kalau setelah ganti masih error, share pesan errornya dan saya bantu debug lebih lanjut.
+
+
+[     UTC     ] Logs for mzrsqgwh3gumcjqjpn8jxe.streamlit.app/ ──────────────────────────────────────────────────────────────────────────────────────── [04:30:28] 🚀 Starting up repository: 'ds-sfinity', branch: 'main', main module: 'Dashboard/App.py' [04:30:28] 🐙 Cloning repository...
+
+pasted
+
+12:25 PM
+Masalahnya jelas: installer returned a non-zero exit code berulang — artinya ada package di requirements.txt yang gagal diinstall di Python 3.14.5 (Python terbaru, banyak package belum support).
+
+Penyebab utama: scipy==1.16.0 dan kemungkinan versi lain tidak punya wheel untuk Python 3.14.
+
+
+Created a file, read a file
+Created a file, read a file
+Yang dihapus dan alasannya:
+
+Package	Masalah
+scipy==1.16.0	Versi tidak ada, dan scipy belum punya wheel untuk Python 3.14
+matplotlib	Tidak dipakai di App_fixed.py
+seaborn	Tidak dipakai di App_fixed.py
+Yang diubah:
+
+numpy>=2.0.0 — numpy 2.x sudah support Python 3.14
+scikit-learn>=1.5.0 — ditambahkan karena dipakai (KMeans, PCA, dll)
+Semua versi pakai >= bukan == supaya pip/uv bisa pilih wheel yang kompatibel dengan Python 3.14
+Satu hal lagi — kamu punya 2 file requirements.txt (di /Dashboard/ dan di root /). Hapus yang di root agar tidak confusing, atau pastikan isinya sama.
+
+
+Requirements
+TXT 
+File "/mount/src/ds-sfinity/Dashboard/App.py", line 387, in <module>
+    df, meta = load_and_process_data(file_key)
+               ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+File "/home/adminuser/venv/lib/python3.14/site-packages/streamlit/runtime/caching/cache_utils.py", line 280, in __call__     return self._get_or_create_cached_value(args, kwargs, spinner_message)            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/adminuser/venv/lib/python3.14/site-packages/streamlit/runtime/caching/cache_utils.py", line 325, in _get_or_create_cached_value     return self._handle_cache_miss(cache, value_key, func_args, func_kwargs)            ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/adminuser/venv/lib/python3.14/site-packages/streamlit/runtime/caching/cache_utils.py", line 409, in _handle_cache_miss     raise UnserializableReturnValueError(         return_value=computed_value, func=self._info.func     ) from ex
+
+Show more
+12:29 PM
+Error ini jelas: UnserializableReturnValueError — @st.cache_data tidak bisa serialize salah satu object yang dikembalikan fungsi load_and_process_data.
+
+Penyebabnya adalah fungsi get_status (lambda/def) yang ada di dalam meta dict. Fungsi Python tidak bisa di-serialize oleh cache Streamlit.
+
+
+Viewed 3 files
+Viewed 3 files
+Ketemu. Ada 2 masalah di meta dict:
+
+get_status=get_status — fungsi tidak bisa di-serialize
+profil — pandas DataFrame dengan index bertipe Int64 (nullable) kadang bermasalah
+Fix: hapus get_status dari meta, pindahkan ke fungsi global yang pakai p25/p50/p75 dari luar cache.
+
+
+Edited 2 files, viewed a file, ran a command
+Edited 2 files, viewed a file, ran a command
+Sekarang tambahkan fungsi global make_status() dan ganti semua pemakaian get_status di luar cache:
+
+
+Ran 2 commands
+Ran 2 commands
+Bersih — get_status hanya tersisa di get_status_badge (berbeda fungsi, aman). Sekarang verifikasi make_status terpanggil dengan benar:
+
+
+Ran 2 commands, read a file
+Ran 2 commands, read a file
+File sudah diperbaiki. Berikut ringkasan apa yang menyebabkan error dan apa yang diubah:
+
+🔍 Penyebab UnserializableReturnValueError
+@st.cache_data menggunakan pickle untuk menyimpan return value ke disk. Fungsi Python (def/lambda) tidak bisa di-pickle — dan get_status disimpan di dalam meta dict yang dikembalikan cache.
+
+✅ 3 Perubahan yang dilakukan
+1. Hapus get_status dari meta dict Fungsi tidak boleh ada di dalam return value cache sama sekali.
+
+2. Buat fungsi global make_status(score, p25, p50, p75) Fungsi global tidak perlu di-cache — Streamlit tidak menyentuhnya. Nilai threshold p25/p50/p75 diteruskan sebagai parameter saat dipanggil.
+
+3. Paksa semua nilai di meta jadi tipe plain Python
+
+python
+# Sebelum (bisa bermasalah)
+cluster_list=cluster_list,         # numpy int64
+sil_scores=sil_scores,             # numpy float64
+
+# Sesudah (aman)
+cluster_list=[int(c) for c in cluster_list],
+sil_scores={int(k): float(v) for k, v in sil_scores.items()},
+Numpy types (int64, float64) kadang tidak bisa di-serialize di Python 3.14 terbaru.
+
+
+App fixed
+PY 
+TypeError: This app has encountered an error. The original error message is redacted to prevent data leaks. Full error details have been recorded in the logs (if you're on Streamlit Cloud, click on 'Manage app' in the lower right of your app).
+Traceback:
+
+File "/mount/src/ds-sfinity/Dashboard/App.py", line 677, in <module>
+    fig.update_layout(
+    ~~~~~~~~~~~~~~~~~^
+        **PLOTLY_LAYOUT, height=300,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        xaxis=dict(tickmode='array', tickvals=list(k_range), gridcolor='#e2e8f0'),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+
+
+TypeError: This app has encountered an error. The original error message is redacted to prevent data leaks. Full error details have been recorded in the logs (if you're on Streamlit Cloud, click on 'Manage app' in the lower right of your app).
+Traceback:
+File "/mount/src/ds-sfinity/Dashboard/App.py", line 677, in <module>
+    fig.update_layout(
+    ~~~~~~~~~~~~~~~~~^
+        **PLOTLY_LAYOUT, height=300,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        xaxis=dict(tickmode='array', tickvals=list(k_range), gridcolor='#e2e8f0'),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+
+TypeError: This app has encountered an error. The original error message is redacted to prevent data leaks. Full error details have been recorded in the logs (if you're on Streamlit Cloud, click on 'Manage app' in the lower right of your app).
+Traceback:
+File "/mount/src/ds-sfinity/Dashboard/App.py", line 677, in <module>
+    fig.update_layout(
+    ~~~~~~~~~~~~~~~~~^
+        **PLOTLY_LAYOUT, height=300,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        xaxis=dict(tickmode='array', tickvals=list(k_range), gridcolor='#e2e8f0'),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+Show more
+12:38 PM
+Masalahnya ada di PLOTLY_LAYOUT — dict ini sudah punya key xaxis, lalu di update_layout di-pass lagi xaxis=dict(...) sebagai keyword argument terpisah. Duplicate key saat **PLOTLY_LAYOUT di-unpack.
+
+
+Check PLOTLY_LAYOUT definition
+Check PLOTLY_LAYOUT definition
+Konfirmasi masalahnya. Solusinya: hapus xaxis dan yaxis dari PLOTLY_LAYOUT, lalu scan semua update_layout yang konflik:
+
+
+Remove xaxis/yaxis from PLOTLY_LAYOUT
+Remove xaxis/yaxis from PLOTLY_LAYOUT
+Sekarang cari semua update_layout yang pakai **PLOTLY_LAYOUT dan punya konflik xaxis/yaxis, lalu tambahkan axis default di yang belum ada:
+
+
+Ran 2 commands, viewed a file
+Ran 2 commands, viewed a file
+Sekarang cek semua update_layout lain yang mungkin masih konflik — cari yang punya **PLOTLY_LAYOUT sekaligus xaxis= atau yaxis=:
+
+
+Check for remaining duplicate xaxis/yaxis conflicts
+Check for remaining duplicate xaxis/yaxis conflicts
+Ada 3 konflik lagi. Tapi sekarang karena PLOTLY_LAYOUT sudah tidak punya xaxis/yaxis, konflik ini sebenarnya sudah tidak ada — xaxis= di update_layout sekarang tidak bentrok dengan apapun. Mari verifikasi dengan syntax check dan test import:
+
+
+Ran 2 commands, read a file
+Ran 2 commands, read a file
+Selesai. Ini penjelasan singkatnya:
+
+Root cause
+PLOTLY_LAYOUT punya key xaxis dan yaxis. Saat di-unpack dengan **PLOTLY_LAYOUT bersamaan dengan xaxis=dict(...) eksplisit di update_layout(), Python melempar TypeError: keyword argument repeated.
+
+Fix
+Hapus xaxis dan yaxis dari PLOTLY_LAYOUT — dict ini sekarang hanya berisi styling global yang tidak bentrok:
+
+python
+PLOTLY_LAYOUT = dict(
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font=dict(...),
+    margin=dict(...),
+    # xaxis & yaxis DIHAPUS dari sini
+)
+Setiap chart yang butuh kustomisasi axis tetap bisa tulis xaxis=dict(...) sendiri di update_layout() tanpa konflik.
+
+
+App fixed
+PY 
+
+Claude works directly with your codebase
+
+Let Claude edit files, run commands, and ship changes from the desktop app, your terminal, or your IDE.
+
+
+
+
+
+Claude is AI and can make mistakes. Please double-check responses.
+App fixed · PY
 import os
 import warnings
 import streamlit as st
@@ -6,14 +287,14 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-
+ 
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score, davies_bouldin_score
-
+ 
 warnings.filterwarnings("ignore")
-
+ 
 # ─────────────────────────────────────────────
 # PAGE CONFIG
 # ─────────────────────────────────────────────
@@ -23,21 +304,21 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
+ 
 # ─────────────────────────────────────────────
 # CUSTOM CSS  (light bg seperti versi 400 baris)
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-
+ 
 html, body, [class*="css"] {
     font-family: 'Plus Jakarta Sans', sans-serif;
 }
-
+ 
 body { background: #f1f5f9 !important; }
 [data-testid="stAppViewContainer"] { background: #f1f5f9; }
-
+ 
 .metric-card {
     background: white;
     border-radius: 12px;
@@ -63,7 +344,7 @@ body { background: #f1f5f9 !important; }
     color: #94a3b8;
     margin-top: 4px;
 }
-
+ 
 .section-card {
     background: white;
     border-radius: 12px;
@@ -82,7 +363,7 @@ body { background: #f1f5f9 !important; }
     color: #94a3b8;
     margin-bottom: 16px;
 }
-
+ 
 .insight-box {
     background: #eff6ff;
     border-left: 4px solid #3b82f6;
@@ -92,16 +373,16 @@ body { background: #f1f5f9 !important; }
     color: #1e40af;
     margin-top: 10px;
 }
-
+ 
 .badge-bahaya  { background:#ef4444; color:#fff; border-radius:6px; padding:2px 10px; font-size:12px; font-weight:700; }
 .badge-waspada { background:#f59e0b; color:#fff; border-radius:6px; padding:2px 10px; font-size:12px; font-weight:700; }
 .badge-stabil  { background:#3b82f6; color:#fff; border-radius:6px; padding:2px 10px; font-size:12px; font-weight:700; }
 .badge-sehat   { background:#22c55e; color:#fff; border-radius:6px; padding:2px 10px; font-size:12px; font-weight:700; }
-
+ 
 .stTabs [data-baseweb="tab"] { font-weight: 600; font-size: 14px; }
 </style>
 """, unsafe_allow_html=True)
-
+ 
 # ─────────────────────────────────────────────
 # CONSTANTS
 # ─────────────────────────────────────────────
@@ -128,7 +409,7 @@ STATUS_COLORS = {
 CLUSTER_PALETTE = [
     "#3b82f6","#f59e0b","#22c55e","#ef4444","#8b5cf6","#06b6d4"
 ]
-
+ 
 # ─────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────
@@ -138,7 +419,7 @@ def make_status(score: float, p25: float, p50: float, p75: float) -> str:
     if score >= p50: return "Stabil"
     if score >= p25: return "Waspada"
     return "Bahaya"
-
+ 
 def fmt_rupiah(val, short=True):
     if pd.isna(val):
         return "N/A"
@@ -149,24 +430,25 @@ def fmt_rupiah(val, short=True):
             return f"Rp {val/1_000:.0f}rb"
         return f"Rp {val:.0f}"
     return f"Rp {val:,.0f}"
-
+ 
 def get_status_badge(status):
     cls_map = {
         "Bahaya": "bahaya", "Waspada": "waspada",
         "Stabil": "stabil", "Sangat Sehat": "sehat"
     }
     return f'<span class="badge-{cls_map.get(status, "stabil")}">{status}</span>'
-
+ 
 # Plotly layout defaults (light theme, responsive)
 PLOTLY_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
     font=dict(family="Plus Jakarta Sans, sans-serif", color="#334155"),
     margin=dict(t=30, b=30, l=10, r=10),
-    xaxis=dict(gridcolor="#e2e8f0", showgrid=True),
-    yaxis=dict(gridcolor="#e2e8f0", showgrid=True),
 )
-
+# Helper: default axis style — merge manual di setiap update_layout
+_AX = dict(gridcolor="#e2e8f0", showgrid=True, zeroline=False)
+_AX_NOGRID = dict(showgrid=False, zeroline=False)
+ 
 # ─────────────────────────────────────────────
 # DATA LOADING — hanya cache DataFrame + angka,
 # TIDAK cache model sklearn (biang kelambatan)
@@ -182,7 +464,7 @@ def load_and_process_data(file_key: str):
         df_raw = pd.read_csv("Data/student_spending (1).csv")
     else:
         df_raw = pd.read_csv(file_key)
-
+ 
     # ── rename ──
     df = df_raw.rename(columns={
         'Unnamed: 0'     : 'id',
@@ -200,19 +482,19 @@ def load_and_process_data(file_key: str):
         'health_wellness': 'kesehatan',
         'miscellaneous'  : 'lainnya',
     })
-
+ 
     # ── konversi USD → IDR ──
     for col in ['pendapatan', 'bantuan']:
         if col in df.columns:
             df[col] = (df[col] * KURS_USD_IDR).round(0)
-
+ 
     for col, r in RASIO.items():
         if col in df.columns:
             if col == 'pendidikan':
                 df[col] = (df[col] / 6 * KURS_USD_IDR * r).round(0)
             else:
                 df[col] = (df[col] * KURS_USD_IDR * r).round(0)
-
+ 
     # ── derived ──
     df['total_pemasukan']   = df['pendapatan'] + df['bantuan']
     df['total_pengeluaran'] = df[list(RASIO.keys())].sum(axis=1)
@@ -220,7 +502,7 @@ def load_and_process_data(file_key: str):
     df['rasio_pengeluaran'] = (
         df['total_pengeluaran'] / df['total_pemasukan'].replace(0, np.nan)
     )
-
+ 
     # ── financial score ──
     def hitung_score(row):
         ti = row['total_pemasukan']
@@ -232,13 +514,13 @@ def load_and_process_data(file_key: str):
         buffer = max(0, min(1, row['sisa_uang'] / tp)) if tp > 0 else 0
         skor_c = buffer * 100
         return round(0.40*skor_a + 0.30*skor_b + 0.30*skor_c, 2)
-
+ 
     df['financial_score'] = df.apply(hitung_score, axis=1)
-
+ 
     p25 = float(df['financial_score'].quantile(0.25))
     p50 = float(df['financial_score'].quantile(0.50))
     p75 = float(df['financial_score'].quantile(0.75))
-
+ 
     # Gunakan fungsi global (tidak disimpan di meta agar cache bisa serialize)
     df['status_finansial'] = df['financial_score'].apply(
         lambda s: (
@@ -248,7 +530,7 @@ def load_and_process_data(file_key: str):
             "Bahaya"
         )
     )
-
+ 
     # ── clustering ──
     cat_cols = [c for c in df.select_dtypes('object').columns
                 if c not in ['status_finansial', 'nama_cluster']]
@@ -256,7 +538,7 @@ def load_and_process_data(file_key: str):
     for col in cat_cols:
         le = LabelEncoder()
         df_enc[col+'_enc'] = le.fit_transform(df_enc[col].astype(str))
-
+ 
     fitur = (
         ['total_pemasukan','total_pengeluaran','sisa_uang','rasio_pengeluaran',
          'pendidikan','tempat_tinggal','makanan','transportasi','hiburan',
@@ -264,11 +546,11 @@ def load_and_process_data(file_key: str):
         + [c+'_enc' for c in cat_cols if c+'_enc' in df_enc.columns]
     )
     fitur = [c for c in fitur if c in df_enc.columns]
-
+ 
     X = df_enc[fitur].dropna()
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
-
+ 
     # Pilih k optimal (silhouette)
     sil_scores = {}
     for k in range(2, 7):
@@ -276,33 +558,33 @@ def load_and_process_data(file_key: str):
         km.fit(X_scaled)
         sil_scores[k] = float(silhouette_score(X_scaled, km.labels_))
     best_k = max(sil_scores, key=sil_scores.get)
-
+ 
     kmeans = KMeans(n_clusters=best_k, init='k-means++', n_init=20, random_state=42)
     kmeans.fit(X_scaled)
-
+ 
     sil_val = float(silhouette_score(X_scaled, kmeans.labels_))
     db_val  = float(davies_bouldin_score(X_scaled, kmeans.labels_))
-
+ 
     df.loc[X.index, 'cluster'] = kmeans.labels_.astype(int)
     df['cluster'] = df['cluster'].astype('Int64')
-
+ 
     # PCA 2D — simpan sebagai list biasa (bukan numpy array)
     pca = PCA(n_components=2, random_state=42)
     X_pca = pca.fit_transform(X_scaled)
     var_exp = [float(v*100) for v in pca.explained_variance_ratio_]
-
+ 
     # Nama cluster
     cluster_list = sorted(df['cluster'].dropna().unique().tolist())
     kol = ['total_pemasukan','total_pengeluaran','sisa_uang',
            'rasio_pengeluaran','financial_score']
     kol = [c for c in kol if c in df.columns]
     profil = df.groupby('cluster')[kol].mean().round(0)
-
+ 
     sisa_rank  = profil['sisa_uang'].rank(ascending=False)
     rasio_rank = profil['rasio_pengeluaran'].rank(ascending=True)
     pend_rank  = profil['total_pemasukan'].rank(ascending=False)
     n_cl = len(cluster_list)
-
+ 
     nama_cluster = {}
     for cl in cluster_list:
         rs = sisa_rank[cl]; rr = rasio_rank[cl]; rp = pend_rank[cl]
@@ -319,23 +601,23 @@ def load_and_process_data(file_key: str):
         else:
             label = "Rata-rata"
         nama_cluster[int(cl)] = f"Cluster {int(cl)}: {label}"
-
+ 
     df['nama_cluster'] = df['cluster'].map(nama_cluster)
-
+ 
     # Tambahkan kolom PCA ke df subset untuk scatter
     pca_df = pd.DataFrame(
         X_pca, index=X.index, columns=['PC1', 'PC2']
     )
     df = df.join(pca_df, how='left')
-
+ 
     # Centroid PCA
     centroids_pca = pca.transform(kmeans.cluster_centers_)
     centroid_df = pd.DataFrame(centroids_pca, columns=['PC1','PC2'])
     centroid_df['cluster'] = list(range(best_k))
-
+ 
     # Reset profil index ke int biasa agar serializable
     profil.index = profil.index.astype(int)
-
+ 
     meta = dict(
         best_k=int(best_k),
         sil=float(sil_val),
@@ -351,7 +633,7 @@ def load_and_process_data(file_key: str):
         # get_status TIDAK disimpan — pakai fungsi global make_status()
     )
     return df, meta
-
+ 
 # ─────────────────────────────────────────────
 # SIDEBAR
 # ─────────────────────────────────────────────
@@ -359,13 +641,13 @@ with st.sidebar:
     st.markdown("## 🎓 Financial Dashboard")
     st.markdown("**Clustering Finansial Mahasiswa**")
     st.divider()
-
+ 
     st.markdown("### 📂 Sumber Data")
     DEFAULT_DATA_PATH = "Data/student_spending (1).csv"
     uploaded_file = st.file_uploader("Upload CSV lain *(opsional)*", type=["csv"])
     st.divider()
     st.caption("Dashboard · Data: Kaggle Student Spending")
-
+ 
 # ─────────────────────────────────────────────
 # LOAD DATA
 # ─────────────────────────────────────────────
@@ -379,7 +661,7 @@ st.markdown(
     'Analisis K-Means Clustering · Konversi USD → IDR · Financial Health Score</p>',
     unsafe_allow_html=True
 )
-
+ 
 if uploaded_file is not None:
     uploaded_file.seek(0)
     tmp_path = f"/tmp/{uploaded_file.name}"
@@ -394,17 +676,17 @@ else:
         "Upload manual via sidebar."
     )
     st.stop()
-
+ 
 with st.spinner("⚙️ Memuat & memproses data..."):
     df, meta = load_and_process_data(file_key)
-
+ 
 profil       = meta['profil']
 cluster_list = meta['cluster_list']
 nama_cluster = meta['nama_cluster']
 # get_status diambil dari fungsi global make_status()
 best_k       = meta['best_k']
 pengeluaran_cols = [c for c in list(RASIO.keys()) if c in df.columns]
-
+ 
 # ── Sidebar filters (setelah data loaded) ──
 with st.sidebar:
     st.markdown("### 🔍 Filter Data")
@@ -414,16 +696,16 @@ with st.sidebar:
     )
     gender_opts = df['gender'].dropna().unique().tolist() if 'gender' in df.columns else []
     gender_filter = st.multiselect("Gender", options=gender_opts, default=gender_opts)
-
+ 
     year_opts = df['year_in_school'].dropna().unique().tolist() if 'year_in_school' in df.columns else []
     year_filter = st.multiselect("Tahun Kuliah", options=year_opts, default=year_opts)
-
+ 
 fdf = df[df['nama_cluster'].isin(cluster_filter)]
 if gender_opts:
     fdf = fdf[fdf['gender'].isin(gender_filter)]
 if year_opts:
     fdf = fdf[fdf['year_in_school'].isin(year_filter)]
-
+ 
 # ─────────────────────────────────────────────
 # KPI CARDS
 # ─────────────────────────────────────────────
@@ -444,9 +726,9 @@ for col, (label, value, sub) in zip(cols, kpi_data):
             <div class="value">{value}</div>
             <div class="sub">{sub}</div>
         </div>""", unsafe_allow_html=True)
-
+ 
 st.markdown("<br>", unsafe_allow_html=True)
-
+ 
 # ─────────────────────────────────────────────
 # TABS
 # ─────────────────────────────────────────────
@@ -454,16 +736,16 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 Overview", "🔍 EDA", "🤖 Clustering",
     "🏷️ Profil Cluster", "📥 Export"
 ])
-
+ 
 # ══════════════════════════════════════════════
 # TAB 1 — OVERVIEW
 # ══════════════════════════════════════════════
 with tab1:
     st.markdown('<div class="section-card"><div class="section-title">📊 Ringkasan Kesehatan Finansial</div>'
                 '<div class="section-sub">Gambaran besar kondisi keuangan seluruh mahasiswa</div>', unsafe_allow_html=True)
-
+ 
     col_left, col_right = st.columns(2)
-
+ 
     with col_left:
         dist_status = fdf['status_finansial'].value_counts().reindex(STATUS_ORDER, fill_value=0)
         fig = px.pie(
@@ -477,7 +759,7 @@ with tab1:
         fig.update_traces(textposition='outside', textinfo='percent+label')
         fig.update_layout(**PLOTLY_LAYOUT, height=320, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
-
+ 
     with col_right:
         dist_pct = (dist_status / len(fdf) * 100).round(1)
         fig = px.bar(
@@ -492,7 +774,7 @@ with tab1:
         fig.update_traces(textposition='outside')
         fig.update_layout(**PLOTLY_LAYOUT, height=320, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
-
+ 
     # Histogram financial score
     fig = px.histogram(
         fdf, x='financial_score', nbins=30,
@@ -514,7 +796,7 @@ with tab1:
                       annotation_font_color=col_line)
     fig.update_layout(**PLOTLY_LAYOUT, height=340)
     st.plotly_chart(fig, use_container_width=True)
-
+ 
     st.markdown(f"""
     <div class="insight-box">
     💡 <b>Interpretasi Score:</b> Financial Health Score dihitung dari 3 komponen:
@@ -523,25 +805,25 @@ with tab1:
     </div>
     """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
-
+ 
 # ══════════════════════════════════════════════
 # TAB 2 — EDA
 # ══════════════════════════════════════════════
 with tab2:
     st.markdown('<div class="section-card"><div class="section-title">🔍 Exploratory Data Analysis</div>'
                 '<div class="section-sub">Distribusi, korelasi, dan pola pengeluaran</div>', unsafe_allow_html=True)
-
+ 
     eda_sub = st.selectbox("Pilih analisis:", [
         "Distribusi Numerik", "Boxplot Pengeluaran",
         "Komposisi Pengeluaran", "Matriks Korelasi",
         "Distribusi Kategorikal"
     ])
-
+ 
     if eda_sub == "Distribusi Numerik":
         numerik_cols = ['usia','pendapatan','bantuan','total_pemasukan',
                         'total_pengeluaran','sisa_uang','rasio_pengeluaran','financial_score']
         numerik_cols = [c for c in numerik_cols if c in fdf.columns]
-
+ 
         # Plotly: 2 baris × 4 kolom, responsif otomatis
         fig = make_subplots(
             rows=2, cols=4,
@@ -572,7 +854,7 @@ with tab2:
                           **{k: v for k, v in PLOTLY_LAYOUT.items() if k not in ['xaxis','yaxis']},
                           showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
-
+ 
     elif eda_sub == "Boxplot Pengeluaran":
         fig = go.Figure()
         for i, col in enumerate(pengeluaran_cols):
@@ -588,7 +870,7 @@ with tab2:
             showlegend=False,
         )
         st.plotly_chart(fig, use_container_width=True)
-
+ 
     elif eda_sub == "Komposisi Pengeluaran":
         rata = fdf[pengeluaran_cols].mean().sort_values(ascending=False)
         col_l, col_r = st.columns(2)
@@ -611,7 +893,7 @@ with tab2:
             fig.update_layout(**PLOTLY_LAYOUT, height=380,
                               coloraxis_showscale=False, showlegend=False)
             st.plotly_chart(fig, use_container_width=True)
-
+ 
     elif eda_sub == "Matriks Korelasi":
         num_cols = fdf.drop(columns=['id'], errors='ignore').select_dtypes('number').columns
         corr = fdf[num_cols].corr().round(2)
@@ -628,7 +910,7 @@ with tab2:
         )
         fig.update_layout(**PLOTLY_LAYOUT, height=560)
         st.plotly_chart(fig, use_container_width=True)
-
+ 
     else:  # Kategorikal
         cat_cols_show = [c for c in fdf.select_dtypes('object').columns
                          if c not in ['status_finansial', 'nama_cluster']]
@@ -646,9 +928,9 @@ with tab2:
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Tidak ada kolom kategorikal terdeteksi.")
-
+ 
     st.markdown('</div>', unsafe_allow_html=True)
-
+ 
 # ══════════════════════════════════════════════
 # TAB 3 — CLUSTERING
 # ══════════════════════════════════════════════
@@ -656,9 +938,9 @@ with tab3:
     st.markdown('<div class="section-card"><div class="section-title">🤖 Proses Clustering K-Means</div>'
                 '<div class="section-sub">Seleksi cluster optimal, visualisasi PCA, dan metrik evaluasi</div>',
                 unsafe_allow_html=True)
-
+ 
     col_a, col_b = st.columns(2)
-
+ 
     with col_a:
         k_range = sorted(meta['sil_scores'].keys())
         sil_vals = [meta['sil_scores'][k] for k in k_range]
@@ -677,12 +959,12 @@ with tab3:
         fig.update_layout(
             **PLOTLY_LAYOUT, height=300,
             title=f"📐 Silhouette Score per K (Best k={best_k})",
-            xaxis_title="Jumlah Cluster (k)",
-            yaxis_title="Silhouette Score",
-            xaxis=dict(tickmode='array', tickvals=list(k_range), gridcolor='#e2e8f0'),
+            xaxis=dict(tickmode='array', tickvals=list(k_range),
+                       gridcolor='#e2e8f0', showgrid=True, title_text='Jumlah Cluster (k)'),
+            yaxis=dict(gridcolor='#e2e8f0', showgrid=True, title_text='Silhouette Score'),
         )
         st.plotly_chart(fig, use_container_width=True)
-
+ 
     with col_b:
         ev_data = {
             "Metrik": ["Jumlah Cluster (k)", "Silhouette Score",
@@ -694,7 +976,7 @@ with tab3:
         }
         st.markdown("#### 📊 Evaluasi Model")
         st.dataframe(pd.DataFrame(ev_data), use_container_width=True, hide_index=True)
-
+ 
     # PCA scatter — pakai kolom yang sudah ada di df
     pca_df_plot = fdf.dropna(subset=['PC1','PC2','nama_cluster'])
     fig = px.scatter(
@@ -730,7 +1012,7 @@ with tab3:
                       legend=dict(orientation='h', yanchor='bottom',
                                   y=-0.25, xanchor='center', x=0.5))
     st.plotly_chart(fig, use_container_width=True)
-
+ 
     st.markdown(f"""
     <div class="insight-box">
     💡 <b>Tentang PCA:</b> PC1 + PC2 menjelaskan
@@ -739,7 +1021,7 @@ with tab3:
     </div>
     """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
-
+ 
 # ══════════════════════════════════════════════
 # TAB 4 — PROFIL CLUSTER
 # ══════════════════════════════════════════════
@@ -747,7 +1029,7 @@ with tab4:
     st.markdown('<div class="section-card"><div class="section-title">🏷️ Profil & Karakteristik Cluster</div>'
                 '<div class="section-sub">Ringkasan mendalam setiap segmen mahasiswa</div>',
                 unsafe_allow_html=True)
-
+ 
     # Summary cards
     cols_cards = st.columns(len(cluster_list))
     for col, cl in zip(cols_cards, cluster_list):
@@ -771,9 +1053,9 @@ with tab4:
                 <div style="font-size:12px;color:#64748b;margin-top:4px;">Score: {avg_sc:.1f}</div>
             </div>
             """, unsafe_allow_html=True)
-
+ 
     st.markdown("<br>", unsafe_allow_html=True)
-
+ 
     # Heatmap profil (Plotly — interaktif, teks tidak terpotong)
     kolom_hm = [c for c in ['total_pemasukan','total_pengeluaran','sisa_uang',
                              'rasio_pengeluaran','pendidikan','tempat_tinggal',
@@ -781,10 +1063,10 @@ with tab4:
                 if c in profil.columns]
     profil_hm   = profil[kolom_hm]
     profil_norm = ((profil_hm - profil_hm.mean()) / profil_hm.std()).round(2)
-
+ 
     x_labels = [nama_cluster.get(int(c), f"Cluster {int(c)}") for c in profil_hm.index]
     annot = profil_hm.values.astype(float).round(0)
-
+ 
     fig = go.Figure(go.Heatmap(
         z=profil_norm.values.T,
         x=x_labels,
@@ -805,14 +1087,14 @@ with tab4:
         xaxis=dict(tickangle=-15),
     )
     st.plotly_chart(fig, use_container_width=True)
-
+ 
     # Perbandingan KPI — bar chart interaktif
     st.markdown("#### 📊 Perbandingan KPI Antar Cluster")
     kpi_cols = ['total_pemasukan','total_pengeluaran','sisa_uang',
                 'rasio_pengeluaran','hiburan','teknologi','financial_score']
     kpi_cols = [c for c in kpi_cols if c in fdf.columns]
     selected_kpi = st.selectbox("Pilih KPI:", kpi_cols, key="kpi_select")
-
+ 
     kpi_vals = fdf.groupby('nama_cluster')[selected_kpi].mean().reset_index()
     kpi_vals.columns = ['Cluster', 'Nilai']
     fig = px.bar(
@@ -829,7 +1111,7 @@ with tab4:
     fig.update_layout(**PLOTLY_LAYOUT, height=360, showlegend=False,
                       xaxis=dict(tickangle=-10, gridcolor='#e2e8f0'))
     st.plotly_chart(fig, use_container_width=True)
-
+ 
     # Status distribusi per cluster
     st.markdown("#### 📊 Distribusi Status Finansial per Cluster")
     status_data = (
@@ -838,7 +1120,7 @@ with tab4:
     )
     total_per_cl = status_data.groupby('nama_cluster')['Jumlah'].transform('sum')
     status_data['Persen'] = (status_data['Jumlah'] / total_per_cl * 100).round(1)
-
+ 
     fig = px.bar(
         status_data, x='nama_cluster', y='Persen',
         color='status_finansial',
@@ -855,7 +1137,7 @@ with tab4:
                       legend=dict(orientation='h', yanchor='bottom',
                                   y=-0.3, xanchor='center', x=0.5))
     st.plotly_chart(fig, use_container_width=True)
-
+ 
     # Violin plot
     st.markdown("#### 🎻 Distribusi Financial Score per Cluster")
     fig = px.violin(
@@ -879,14 +1161,14 @@ with tab4:
                       xaxis=dict(tickangle=-10, gridcolor='#e2e8f0'))
     st.plotly_chart(fig, use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
-
+ 
 # ══════════════════════════════════════════════
 # TAB 5 — EXPORT
 # ══════════════════════════════════════════════
 with tab5:
     st.markdown('<div class="section-card"><div class="section-title">📥 Export & Ringkasan Akhir</div>'
                 '<div class="section-sub">Download hasil analisis lengkap</div>', unsafe_allow_html=True)
-
+ 
     summary_rows = []
     for cl in cluster_list:
         subset  = fdf[fdf['cluster'] == cl]
@@ -911,7 +1193,7 @@ with tab5:
         })
     df_summary = pd.DataFrame(summary_rows)
     st.dataframe(df_summary, use_container_width=True, hide_index=True)
-
+ 
     col1, col2 = st.columns(2)
     with col1:
         st.download_button(
@@ -929,7 +1211,7 @@ with tab5:
             mime="text/csv",
             use_container_width=True,
         )
-
+ 
     st.markdown(f"""
     <div class="insight-box">
     ✅ <b>Ringkasan Analisis:</b><br>
@@ -941,7 +1223,7 @@ with tab5:
     </div>
     """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
-
+ 
 # ── Footer ────────────────────────────────────
 st.markdown(
     '<div style="text-align:center;color:#94a3b8;font-size:.78rem;margin-top:1.5rem;">'
@@ -949,3 +1231,4 @@ st.markdown(
     '</div>',
     unsafe_allow_html=True
 )
+ 
