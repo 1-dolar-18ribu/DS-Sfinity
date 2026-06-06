@@ -603,52 +603,45 @@ with tab2:
         fig.update_layout(**PL, height=580, margin=dict(t=45,b=15,l=15,r=15))
         st.plotly_chart(fig, use_container_width=True)
 
-    else:  # Kategorikal
-    cat_cols_show = [c for c in fdf.select_dtypes('object').columns
-                     if c not in ['status_finansial', 'nama_cluster']]
-    if cat_cols_show:
-        selected_cat = st.selectbox("Pilih kolom kategori:", cat_cols_show)
-        counts = fdf[selected_cat].value_counts().reset_index()
-        counts.columns = [selected_cat, 'Jumlah']
-
-        # Warna per kategori untuk kolom tertentu
-        COLOR_MAP = {
-            'gender': {
-                'Male'  : '#3b82f6',
-                'Female': '#ec4899',
-                'Other' : '#a855f7',
-            },
-            'year_in_school': {
-                'Freshman' : '#22c55e',
-                'Sophomore': '#3b82f6',
-                'Junior'   : '#f59e0b',
-                'Senior'   : '#ef4444',
-            },
-        }
-
-        cat_color_map = COLOR_MAP.get(selected_cat, None)
-
-        if cat_color_map:
-            fig = px.bar(counts, x=selected_cat, y='Jumlah',
-                         color=selected_cat,
-                         color_discrete_map=cat_color_map,
-                         text='Jumlah', title=f"Distribusi {selected_cat}")
+else:  # Kategorikal
+        cat_cols_show = [c for c in fdf.select_dtypes('object').columns
+                         if c not in ['status_finansial', 'nama_cluster']]
+        if cat_cols_show:
+            selected_cat = st.selectbox("Pilih kolom kategori:", cat_cols_show)
+            counts = fdf[selected_cat].value_counts().reset_index()
+            counts.columns = [selected_cat, 'Jumlah']
+            COLOR_MAP = {
+                'gender': {
+                    'Male'  : '#3b82f6',
+                    'Female': '#ec4899',
+                    'Other' : '#a855f7',
+                },
+                'year_in_school': {
+                    'Freshman' : '#22c55e',
+                    'Sophomore': '#3b82f6',
+                    'Junior'   : '#f59e0b',
+                    'Senior'   : '#ef4444',
+                },
+            }
+            cat_color_map = COLOR_MAP.get(selected_cat, None)
+            if cat_color_map:
+                fig = px.bar(counts, x=selected_cat, y='Jumlah',
+                             color=selected_cat,
+                             color_discrete_map=cat_color_map,
+                             text='Jumlah', title=f"Distribusi {selected_cat}")
+            else:
+                fig = px.bar(counts, x=selected_cat, y='Jumlah',
+                             color=selected_cat,
+                             color_discrete_sequence=px.colors.qualitative.Pastel,
+                             text='Jumlah', title=f"Distribusi {selected_cat}")
+            fig.update_traces(textposition='outside')
+            fig.update_layout(**PL, height=380, margin=M,
+                              showlegend=False,
+                              xaxis_title=selected_cat, yaxis_title="Jumlah Mahasiswa")
+            st.plotly_chart(fig, use_container_width=True, key="t2_kategorikal")
         else:
-            fig = px.bar(counts, x=selected_cat, y='Jumlah',
-                         color=selected_cat,
-                         color_discrete_sequence=px.colors.qualitative.Pastel,
-                         text='Jumlah', title=f"Distribusi {selected_cat}")
-
-        fig.update_traces(textposition='outside')
-        fig.update_layout(**PL, height=380, margin=M,
-                          showlegend=False,
-                          xaxis_title=selected_cat, yaxis_title="Jumlah Mahasiswa")
-        st.plotly_chart(fig, use_container_width=True, key="t2_kategorikal")
-    else:
-        st.info("Tidak ada kolom kategorikal.")
-
+            st.info("Tidak ada kolom kategorikal.")
     st.markdown('</div>', unsafe_allow_html=True)
-
 # ══════════════ TAB 3 — CLUSTERING ════════════════════════════════════════════
 with tab3:
     st.markdown('<div class="section-card"><div class="section-title">🤖 Proses Clustering K-Means</div>'
