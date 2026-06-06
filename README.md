@@ -41,7 +41,6 @@ Dashboard ini memproses data pengeluaran mahasiswa (dalam USD) dan mengonversiny
 | `health_wellness`  | `kesehatan`          | Biaya kesehatan                   |
 | `miscellaneous`    | `lainnya`            | Pengeluaran lainnya               |
 
-> **Kurs konversi:** 1 USD = Rp 16.000
 
 ---
 
