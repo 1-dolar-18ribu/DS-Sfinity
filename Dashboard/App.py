@@ -79,7 +79,7 @@ CLUSTER_PALETTE = ["#3b82f6","#f59e0b","#22c55e","#ef4444","#8b5cf6","#06b6d4"]
 LABEL_KOLOM = {
     'total_pemasukan':'Total Pemasukan (Rp)',
     'total_pengeluaran':'Total Pengeluaran (Rp)',
-    'sisa_uang':'Sisa Uang (Rp)',
+    'sisa_uang':'Sisa Uang / Tabungan (Rp)',
     'rasio_pengeluaran':'Rasio Pengeluaran (0–1)',
     'pendidikan':'Pendidikan (Rp)',
     'tempat_tinggal':'Tempat Tinggal (Rp)',
@@ -108,7 +108,6 @@ def make_status(score, p25, p50, p75):
     return "Bahaya"
 
 def fmt_rupiah(val, short=True):
-    """Format IDR — selalu dalam Jt, tidak pernah B/M."""
     if pd.isna(val): return "N/A"
     if short:
         if abs(val) >= 1_000_000: return f"Rp {val/1_000_000:.1f} Jt"
@@ -116,40 +115,27 @@ def fmt_rupiah(val, short=True):
         return f"Rp {val:.0f}"
     return f"Rp {val:,.0f}"
 
-def fmt_axis_idr(val):
-    """Dipakai untuk tickformat axis — label singkat tanpa desimal berlebih."""
-    if abs(val) >= 1_000_000: return f"Rp{val/1_000_000:.0f}Jt"
-    if abs(val) >= 1_000:     return f"Rp{val/1_000:.0f}rb"
-    return f"Rp{val:.0f}"
-
 def get_status_badge(status):
     cls = {"Bahaya":"bahaya","Waspada":"waspada","Stabil":"stabil","Sangat Sehat":"sehat"}
     return f'<span class="badge-{cls.get(status,"stabil")}">{status}</span>'
 
-# Plotly base layout — tanpa margin agar tidak konflik
 PL = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
     font=dict(family="Plus Jakarta Sans, sans-serif", color="#334155"),
 )
 M   = dict(t=45, b=35, l=15, r=15)
-ML  = dict(t=45, b=20, l=170, r=15)   # heatmap: label y panjang
+ML  = dict(t=45, b=20, l=170, r=15)
 
-def idr_axis(fig, axes=('x',), tickcount=6):
-    """Terapkan format Rp...Jt pada axis yang disebutkan."""
-    for ax in axes:
-        axis_name = f"{ax}axis"
-        fig.update_layout(**{axis_name: dict(tickformat=".2s")})
-    return fig
+def jt_ticks(series, n=6):
+    mn, mx = series.min(), series.max()
+    vals = np.linspace(mn, mx, n)
+    texts = [f"Rp{v/1_000_000:.1f}Jt" for v in vals]
+    return vals.tolist(), texts
 
 # ── DATA LOADING ───────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def load_and_process_data(file_key: str):
-    """
-    FIX UTAMA: konversi USD→IDR hanya dilakukan SEKALI di sini.
-    Streamlit cache menyimpan hasilnya — jika kode diubah, clear cache dulu
-    via menu kanan atas Streamlit Cloud.
-    """
     # 1. Baca CSV
     path = "Data/student_spending (1).csv" if file_key == "__default__" else file_key
     df_raw = pd.read_csv(path)
@@ -172,37 +158,70 @@ def load_and_process_data(file_key: str):
         'miscellaneous'  : 'lainnya',
     })
 
-    # 3. Konversi USD → IDR — hanya untuk kolom numerik uang
-    #    PASTIKAN hanya sekali: cek apakah kolom masih dalam range USD (< 10_000)
-    #    sebelum mengalikan kurs.
+    # 3. Konversi USD → IDR
     cols_money = ['pendapatan', 'bantuan'] + SPENDING_COLS
     for col in cols_money:
         if col in df.columns:
             median_val = df[col].median()
-            # Kalau median > 100_000 berarti sudah IDR, skip konversi
             if median_val < 100_000:
                 df[col] = (df[col] * KURS_USD_IDR).round(0)
 
     # 4. Derived columns
+    # ── FIX: total_pemasukan hanya dari pendapatan + bantuan (income side)
     df['total_pemasukan']   = df['pendapatan'] + df['bantuan']
-    df['total_pengeluaran'] = df[SPENDING_COLS].sum(axis=1)
+    # ── FIX: total_pengeluaran dari SPENDING_COLS yang ada di df (bukan duplikat)
+    spending_available = [c for c in SPENDING_COLS if c in df.columns]
+    df['total_pengeluaran'] = df[spending_available].sum(axis=1)
+    # ── FIX: sisa_uang = selisih, tapi spending di dataset Kaggle ini sudah mencakup
+    #    tuition (pendidikan) yang notabene bukan pengeluaran bulanan rutin.
+    #    Untuk analisis yang lebih realistis, kita pisahkan antara spending rutin
+    #    dan tuition. Jika total_pengeluaran > total_pemasukan, kemungkinan tuition
+    #    dibayar dari tabungan/pinjaman — ini wajar untuk data mahasiswa.
     df['sisa_uang']         = df['total_pemasukan'] - df['total_pengeluaran']
+    # Rasio pengeluaran: clip 0–2 untuk hindari outlier ekstrem
     df['rasio_pengeluaran'] = (
         df['total_pengeluaran'] / df['total_pemasukan'].replace(0, np.nan)
-    ).clip(0, 2)   # clip outlier ekstrem
+    ).clip(0, 2)
 
-    # 5. Financial Health Score
+    # ── FIX: Spending rutin (exclude tuition karena bisa semesteran)
+    SPENDING_RUTIN = [c for c in ['tempat_tinggal','makanan','transportasi',
+                                   'buku','hiburan','perawatan','teknologi',
+                                   'kesehatan','lainnya'] if c in df.columns]
+    df['pengeluaran_rutin']  = df[SPENDING_RUTIN].sum(axis=1)
+    df['sisa_rutin']         = df['total_pemasukan'] - df['pengeluaran_rutin']
+    df['rasio_rutin']        = (
+        df['pengeluaran_rutin'] / df['total_pemasukan'].replace(0, np.nan)
+    ).clip(0, 2)
+
+    # 5. ── FIX Financial Health Score ──────────────────────────────────────
+    # Formula lama: skor_b = esensial/tp*100 → ini reward spending esensial tinggi (salah!)
+    # Formula baru:
+    #   A (40%) = rasio tabungan rutin: sisa_rutin / total_pemasukan  → makin tinggi makin baik
+    #   B (30%) = efisiensi esensial: 1 - (esensial/pengeluaran_rutin) → makin kecil proporsi esensial = lebih baik? 
+    #             Tidak — esensial itu necessary. Yang kita mau: pengeluaran_rutin/total_pemasukan rendah.
+    #             Gunakan: max(0, 1 - rasio_rutin) * 100
+    #   C (30%) = buffer: sisa_rutin / pengeluaran_rutin (likuiditas) → makin tinggi makin baik
+
     def hitung_score(row):
         ti = row['total_pemasukan']
-        tp = row['total_pengeluaran']
+        pr = row['pengeluaran_rutin']
+        sr = row['sisa_rutin']
+
         if ti <= 0: return 0.0
-        rasio_tab = max(0, min(1, row['sisa_uang'] / ti))
-        skor_a    = rasio_tab * 100
-        esensial  = row['tempat_tinggal'] + row['makanan'] + row['transportasi']
-        skor_b    = (esensial / tp * 100) if tp > 0 else 50
-        buffer    = max(0, min(1, row['sisa_uang'] / tp)) if tp > 0 else 0
-        skor_c    = buffer * 100
-        return round(0.40*skor_a + 0.30*skor_b + 0.30*skor_c, 2)
+
+        # A: Savings rate terhadap pemasukan (0–1 → 0–100)
+        savings_rate = max(0.0, min(1.0, sr / ti))
+        skor_a = savings_rate * 100
+
+        # B: Efisiensi pengeluaran rutin — semakin kecil rasio, semakin baik
+        rasio_r = pr / ti if ti > 0 else 1.0
+        skor_b = max(0.0, (1.0 - min(rasio_r, 1.0))) * 100
+
+        # C: Buffer likuiditas — berapa bulan bisa survive dari sisa
+        buffer = max(0.0, min(1.0, sr / pr)) if pr > 0 else 0.0
+        skor_c = buffer * 100
+
+        return round(0.40 * skor_a + 0.30 * skor_b + 0.30 * skor_c, 2)
 
     df['financial_score'] = df.apply(hitung_score, axis=1)
     p25 = float(df['financial_score'].quantile(0.25))
@@ -222,14 +241,14 @@ def load_and_process_data(file_key: str):
         df_enc[col+'_enc'] = le.fit_transform(df_enc[col].astype(str))
 
     fitur = (
-        ['total_pemasukan','total_pengeluaran','sisa_uang','rasio_pengeluaran',
-         'pendidikan','tempat_tinggal','makanan','transportasi',
+        ['total_pemasukan','pengeluaran_rutin','sisa_rutin','rasio_rutin',
+         'tempat_tinggal','makanan','transportasi',
          'hiburan','teknologi','financial_score']
         + [c+'_enc' for c in cat_cols if c+'_enc' in df_enc.columns]
     )
     fitur = [c for c in fitur if c in df_enc.columns]
     X = df_enc[fitur].dropna()
-    scaler  = StandardScaler()
+    scaler   = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
     sil_scores = {}
@@ -252,12 +271,12 @@ def load_and_process_data(file_key: str):
     var_exp = [float(v*100) for v in pca.explained_variance_ratio_]
 
     cluster_list = sorted(df['cluster'].dropna().unique().tolist())
-    kol = [c for c in ['total_pemasukan','total_pengeluaran','sisa_uang',
-                        'rasio_pengeluaran','financial_score'] if c in df.columns]
+    kol = [c for c in ['total_pemasukan','pengeluaran_rutin','sisa_rutin',
+                        'rasio_rutin','financial_score'] if c in df.columns]
     profil = df.groupby('cluster')[kol].mean().round(0)
 
-    sisa_rank  = profil['sisa_uang'].rank(ascending=False)
-    rasio_rank = profil['rasio_pengeluaran'].rank(ascending=True)
+    sisa_rank  = profil['sisa_rutin'].rank(ascending=False)
+    rasio_rank = profil['rasio_rutin'].rank(ascending=True)
     pend_rank  = profil['total_pemasukan'].rank(ascending=False)
     n_cl = len(cluster_list)
 
@@ -347,13 +366,17 @@ if gender_opts: fdf = fdf[fdf['gender'].isin(gender_filter)]
 if year_opts:   fdf = fdf[fdf['year_in_school'].isin(year_filter)]
 
 # ── KPI CARDS ──────────────────────────────────────────────────────────────────
+# Gunakan sisa_rutin (excluding tuition) untuk KPI yang lebih informatif
+avg_sisa_rutin = fdf['sisa_rutin'].mean()
+avg_rasio_rutin = fdf['rasio_rutin'].mean()
+
 kpi_data = [
-    ("Total Mahasiswa",     f"{len(fdf):,}",                                   "responden"),
-    ("Cluster Optimal",     str(best_k),                                        "K-Means"),
-    ("Silhouette Score",    f"{meta['sil']:.3f}",                               "kualitas cluster"),
-    ("Rata-rata Pemasukan", fmt_rupiah(fdf['total_pemasukan'].mean()),           "per bulan"),
-    ("Rata-rata Sisa",      fmt_rupiah(fdf['sisa_uang'].mean()),                 "per bulan"),
-    ("Skor Keuangan",       f"{fdf['financial_score'].mean():.1f}",             "rata-rata / 100"),
+    ("Total Mahasiswa",       f"{len(fdf):,}",                                     "responden"),
+    ("Cluster Optimal",       str(best_k),                                          "K-Means"),
+    ("Silhouette Score",      f"{meta['sil']:.3f}",                                 "kualitas cluster"),
+    ("Rata-rata Pemasukan",   fmt_rupiah(fdf['total_pemasukan'].mean()),             "per bulan"),
+    ("Rata-rata Tabungan",    fmt_rupiah(avg_sisa_rutin),                           "setelah biaya rutin"),
+    ("Skor Keuangan",         f"{fdf['financial_score'].mean():.1f}",               "rata-rata / 100"),
 ]
 cols = st.columns(len(kpi_data))
 for col, (label, value, sub) in zip(cols, kpi_data):
@@ -370,9 +393,10 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 Overview","🔍 EDA","🤖 Clustering","🏷️ Profil Cluster","📥 Export"
 ])
 
-# helper: format tick axis IDR untuk histogram & boxplot
+IDR_COLS = ['pendapatan','bantuan','total_pemasukan','total_pengeluaran',
+            'sisa_uang','sisa_rutin','pengeluaran_rutin'] + SPENDING_COLS
+
 def apply_idr_xaxis(fig):
-    """Ganti tick label sumbu X dengan format Rp...Jt."""
     fig.update_xaxes(tickformat=",.0f", tickprefix="Rp", ticksuffix="")
     return fig
 
@@ -380,18 +404,22 @@ def apply_idr_yaxis(fig):
     fig.update_yaxes(tickformat=",.0f", tickprefix="Rp")
     return fig
 
-def jt_ticks(series, n=6):
-    """Buat tickvals & ticktext dalam satuan Jt untuk axis."""
-    mn, mx = series.min(), series.max()
-    vals = np.linspace(mn, mx, n)
-    texts = [f"Rp{v/1_000_000:.0f}Jt" for v in vals]
-    return vals.tolist(), texts
-
 # ══════════════ TAB 1 — OVERVIEW ═══════════════════════════════════════════════
 with tab1:
     st.markdown('<div class="section-card"><div class="section-title">📊 Ringkasan Kesehatan Finansial</div>'
                 '<div class="section-sub">Gambaran besar kondisi keuangan seluruh mahasiswa yang difilter</div>',
                 unsafe_allow_html=True)
+
+    # ── INFO BOX: penjelasan sisa_rutin vs sisa_uang
+    avg_total_pend  = fdf['total_pengeluaran'].mean()
+    avg_pend_tuition = fdf['pendidikan'].mean() if 'pendidikan' in fdf.columns else 0
+    st.markdown(f"""<div class="insight-box">
+    ℹ️ <b>Catatan Metodologi:</b> Dataset ini mencatat <b>tuition (SPP)</b> sebagai pengeluaran bulanan
+    (kemungkinan besar ini nilai semesteran yang dibagi rata). Total pengeluaran rata-rata
+    <b>{fmt_rupiah(avg_total_pend)}/bln</b> termasuk SPP <b>{fmt_rupiah(avg_pend_tuition)}/bln</b>.
+    KPI "Rata-rata Tabungan" dan Financial Score dihitung dari <b>biaya hidup rutin</b>
+    (tanpa SPP) agar lebih mencerminkan kemampuan menabung harian mahasiswa.
+    </div>""", unsafe_allow_html=True)
 
     col_left, col_right = st.columns(2)
     with col_left:
@@ -437,11 +465,48 @@ with tab1:
                       yaxis_title="Jumlah Mahasiswa")
     st.plotly_chart(fig, use_container_width=True)
 
+    # ── Perbandingan Pemasukan vs Pengeluaran Rutin (bar chart)
+    st.markdown("#### 💸 Rata-rata Pemasukan vs Pengeluaran per Komponen")
+    breakdown = {
+        'Pendapatan Sendiri': fdf['pendapatan'].mean(),
+        'Bantuan Keuangan':   fdf['bantuan'].mean(),
+    }
+    spending_labels = {
+        'tempat_tinggal':'Tempat Tinggal','makanan':'Makanan',
+        'transportasi':'Transportasi','pendidikan':'Pendidikan/SPP',
+        'hiburan':'Hiburan','teknologi':'Teknologi',
+        'perawatan':'Perawatan','buku':'Buku',
+        'kesehatan':'Kesehatan','lainnya':'Lainnya',
+    }
+    income_df = pd.DataFrame([
+        {'Komponen': k, 'Nilai': v, 'Tipe': 'Pemasukan'} for k, v in breakdown.items()
+    ])
+    spend_df = pd.DataFrame([
+        {'Komponen': spending_labels.get(c, c), 'Nilai': fdf[c].mean(), 'Tipe': 'Pengeluaran'}
+        for c in SPENDING_COLS if c in fdf.columns
+    ]).sort_values('Nilai', ascending=False)
+    combined = pd.concat([income_df, spend_df], ignore_index=True)
+    fig = px.bar(combined, x='Komponen', y='Nilai', color='Tipe',
+                 color_discrete_map={'Pemasukan':'#22c55e','Pengeluaran':'#ef4444'},
+                 barmode='group',
+                 text=combined['Nilai'].apply(fmt_rupiah),
+                 title="Rata-rata Pemasukan vs Pengeluaran per Komponen (IDR/bulan)")
+    fig.update_traces(textposition='outside', textfont_size=10)
+    all_vals = combined['Nilai']
+    tvs, tts = jt_ticks(all_vals)
+    fig.update_layout(**PL, height=420, margin=dict(t=45,b=80,l=15,r=15),
+                      yaxis=dict(tickvals=tvs, ticktext=tts, title="Jumlah (Rp/bulan)"),
+                      xaxis=dict(tickangle=30, title=""),
+                      legend=dict(orientation='h', yanchor='bottom', y=-0.35, xanchor='center', x=0.5))
+    st.plotly_chart(fig, use_container_width=True)
+
     st.markdown(f"""<div class="insight-box">
-    💡 <b>Interpretasi Score:</b> Financial Health Score dihitung dari 3 komponen:
-    <b>40%</b> rasio tabungan terhadap pemasukan, <b>30%</b> proporsi pengeluaran esensial
-    (tempat tinggal + makanan + transportasi), <b>30%</b> buffer likuiditas.
-    Score rata-rata saat ini <b>{mean_val:.1f}/100</b> — threshold:
+    💡 <b>Interpretasi Score:</b> Financial Health Score (0–100) dihitung dari biaya hidup <b>rutin</b>
+    (tanpa SPP) dengan 3 komponen:
+    <b>40%</b> savings rate (sisa rutin / pemasukan),
+    <b>30%</b> efisiensi pengeluaran (semakin rendah rasio pengeluaran = semakin baik),
+    <b>30%</b> buffer likuiditas (sisa / pengeluaran rutin).<br>
+    Score rata-rata: <b>{mean_val:.1f}/100</b> · Threshold:
     Bahaya &lt;{meta['p25']:.0f} · Waspada {meta['p25']:.0f}–{meta['p50']:.0f} ·
     Stabil {meta['p50']:.0f}–{meta['p75']:.0f} · Sangat Sehat ≥{meta['p75']:.0f}.
     </div>""", unsafe_allow_html=True)
@@ -458,11 +523,9 @@ with tab2:
         "Komposisi Pengeluaran","Matriks Korelasi","Distribusi Kategorikal"
     ])
 
-    IDR_COLS = ['pendapatan','bantuan','total_pemasukan','total_pengeluaran','sisa_uang'] + SPENDING_COLS
-
     if eda_sub == "Distribusi Numerik":
         numerik_cols = [c for c in ['usia','pendapatan','bantuan','total_pemasukan',
-                        'total_pengeluaran','sisa_uang','rasio_pengeluaran','financial_score']
+                        'pengeluaran_rutin','sisa_rutin','rasio_rutin','financial_score']
                         if c in fdf.columns]
         fig = make_subplots(
             rows=2, cols=4,
@@ -482,7 +545,6 @@ with tab2:
             fig.add_vline(x=float(data_col.mean()),   line_dash='dash',  line_color='#ef4444', row=row_n+1, col=col_idx+1)
             fig.add_vline(x=float(data_col.median()), line_dash='solid', line_color='#10b981', row=row_n+1, col=col_idx+1)
 
-            # Format axis IDR dengan tickvals manual
             if is_idr:
                 tvs, tts = jt_ticks(data_col)
                 axis_key = f"xaxis{'' if (row_n*4+col_idx)==0 else (row_n*4+col_idx+1)}"
@@ -503,13 +565,11 @@ with tab2:
         fig = go.Figure()
         for i, col in enumerate(pengeluaran_cols):
             data = fdf[col].dropna()
-            tvs, tts = jt_ticks(data)
             fig.add_trace(go.Box(
                 y=data, name=kolom_label(col).replace(" (Rp)",""),
                 marker_color=px.colors.qualitative.Pastel[i % 10],
                 boxmean=True,
             ))
-        # Format Y axis IDR
         all_vals = fdf[pengeluaran_cols].values.flatten()
         tvs, tts = jt_ticks(pd.Series(all_vals[~np.isnan(all_vals)]))
         fig.update_layout(**PL, height=450, margin=M,
@@ -563,7 +623,6 @@ with tab2:
         corr = fdf[num_cols].corr().round(2)
         mask = np.triu(np.ones_like(corr, dtype=bool), k=1)
         corr_masked = corr.where(~mask)
-        # Ganti nama kolom untuk display
         corr_display = corr_masked.copy()
         corr_display.columns = [LABEL_KOLOM.get(c, c) for c in corr_display.columns]
         corr_display.index   = [LABEL_KOLOM.get(c, c) for c in corr_display.index]
@@ -666,7 +725,6 @@ with tab4:
                 '<div class="section-sub">Ringkasan mendalam setiap segmen mahasiswa berdasarkan hasil clustering</div>',
                 unsafe_allow_html=True)
 
-    # Summary cards
     cols_cards = st.columns(len(cluster_list))
     for col, cl in zip(cols_cards, cluster_list):
         subset = fdf[fdf['cluster'] == cl]
@@ -689,23 +747,32 @@ with tab4:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Heatmap profil
-    kolom_hm = [c for c in ['total_pemasukan','total_pengeluaran','sisa_uang',
-                             'rasio_pengeluaran','pendidikan','tempat_tinggal',
-                             'makanan','hiburan','teknologi','financial_score'] if c in profil.columns]
+    # Heatmap profil (gunakan pengeluaran_rutin & sisa_rutin)
+    kolom_hm = [c for c in ['total_pemasukan','pengeluaran_rutin','sisa_rutin',
+                             'rasio_rutin','tempat_tinggal','makanan',
+                             'hiburan','teknologi','financial_score'] if c in profil.columns]
     profil_hm   = profil[kolom_hm]
     profil_norm = ((profil_hm - profil_hm.mean()) / profil_hm.std()).round(2)
     x_labels    = [nama_cluster.get(int(c), f"Cl{int(c)}") for c in profil_hm.index]
     annot_raw   = profil_hm.values.astype(float)
 
+    LABEL_KOLOM_EXT = {**LABEL_KOLOM,
+        'pengeluaran_rutin': 'Pengeluaran Rutin (Rp)',
+        'sisa_rutin':        'Tabungan/Sisa Rutin (Rp)',
+        'rasio_rutin':       'Rasio Pengeluaran Rutin',
+    }
+
+    def kolom_label_ext(col):
+        return LABEL_KOLOM_EXT.get(col, col.replace('_',' ').title())
+
     def _fmt_cell(v, col):
-        if col == 'rasio_pengeluaran': return f"{v:.2f}x"
+        if col in ('rasio_pengeluaran', 'rasio_rutin'): return f"{v:.2f}x"
         if col == 'financial_score':   return f"{v:.1f}/100"
         return fmt_rupiah(v)
 
     fig = go.Figure(go.Heatmap(
         z=profil_norm.values.T, x=x_labels,
-        y=[kolom_label(c) for c in kolom_hm],
+        y=[kolom_label_ext(c) for c in kolom_hm],
         text=[[_fmt_cell(v, col) for v in row] for col, row in zip(kolom_hm, annot_raw.T)],
         texttemplate="%{text}", colorscale='RdYlGn', zmin=-2, zmax=2,
         colorbar=dict(title="Z-score<br>(merah=rendah,<br>hijau=tinggi)"),
@@ -719,13 +786,13 @@ with tab4:
 
     # Perbandingan KPI
     st.markdown("#### 📊 Perbandingan KPI Antar Cluster")
-    kpi_cols = [c for c in ['total_pemasukan','total_pengeluaran','sisa_uang',
-                             'rasio_pengeluaran','hiburan','teknologi','financial_score'] if c in fdf.columns]
-    selected_kpi = st.selectbox("Pilih KPI:", kpi_cols, format_func=kolom_label, key="kpi_select")
+    kpi_cols = [c for c in ['total_pemasukan','pengeluaran_rutin','sisa_rutin',
+                             'rasio_rutin','hiburan','teknologi','financial_score'] if c in fdf.columns]
+    selected_kpi = st.selectbox("Pilih KPI:", kpi_cols, format_func=kolom_label_ext, key="kpi_select")
 
     kpi_vals = fdf.groupby('nama_cluster')[selected_kpi].mean().reset_index()
     kpi_vals.columns = ['Cluster','Nilai']
-    is_ratio = selected_kpi == 'rasio_pengeluaran'
+    is_ratio = selected_kpi in ('rasio_pengeluaran','rasio_rutin')
     is_score = selected_kpi == 'financial_score'
     is_idr   = not is_ratio and not is_score
 
@@ -734,13 +801,13 @@ with tab4:
     )
     fig = px.bar(kpi_vals, x='Cluster', y='Nilai', color='Cluster',
                  color_discrete_sequence=CLUSTER_PALETTE, text='Label',
-                 title=f"Rata-rata {kolom_label(selected_kpi)} per Cluster",
-                 labels={'Nilai': kolom_label(selected_kpi), 'Cluster':'Segmen Cluster'})
+                 title=f"Rata-rata {kolom_label_ext(selected_kpi)} per Cluster",
+                 labels={'Nilai': kolom_label_ext(selected_kpi), 'Cluster':'Segmen Cluster'})
     fig.update_traces(textposition='outside')
 
     if is_idr:
         tvs, tts = jt_ticks(kpi_vals['Nilai'])
-        fig.update_layout(yaxis=dict(tickvals=tvs, ticktext=tts, title=kolom_label(selected_kpi)))
+        fig.update_layout(yaxis=dict(tickvals=tvs, ticktext=tts, title=kolom_label_ext(selected_kpi)))
 
     fig.update_layout(**PL, height=380, showlegend=False, margin=M,
                       xaxis=dict(tickangle=0, gridcolor='#e2e8f0', title='Segmen Cluster'))
@@ -798,26 +865,27 @@ with tab5:
         dist_pct = (subset['status_finansial'].value_counts(normalize=True)
                     .reindex(STATUS_ORDER, fill_value=0) * 100)
         summary_rows.append({
-            "Cluster":         nama_cluster.get(int(cl), f"Cluster {int(cl)}"),
-            "Jumlah":          len(subset),
-            "Avg Pemasukan":   fmt_rupiah(subset['total_pemasukan'].mean()),
-            "Avg Pengeluaran": fmt_rupiah(subset['total_pengeluaran'].mean()),
-            "Avg Sisa":        fmt_rupiah(subset['sisa_uang'].mean()),
-            "Rasio Pengeluaran": f"{subset['rasio_pengeluaran'].mean():.2f}x",
-            "Fin. Score":      f"{avg_sc:.1f}/100",
-            "Status Dominan":  make_status(avg_sc, meta['p25'], meta['p50'], meta['p75']),
-            "% Bahaya":        f"{dist_pct['Bahaya']:.1f}%",
-            "% Waspada":       f"{dist_pct['Waspada']:.1f}%",
-            "% Stabil":        f"{dist_pct['Stabil']:.1f}%",
-            "% Sangat Sehat":  f"{dist_pct['Sangat Sehat']:.1f}%",
+            "Cluster":              nama_cluster.get(int(cl), f"Cluster {int(cl)}"),
+            "Jumlah":              len(subset),
+            "Avg Pemasukan":       fmt_rupiah(subset['total_pemasukan'].mean()),
+            "Avg Pengeluaran Rutin": fmt_rupiah(subset['pengeluaran_rutin'].mean()),
+            "Avg Tabungan (Rutin)": fmt_rupiah(subset['sisa_rutin'].mean()),
+            "Rasio Pengeluaran":   f"{subset['rasio_rutin'].mean():.2f}x",
+            "Fin. Score":          f"{avg_sc:.1f}/100",
+            "Status Dominan":      make_status(avg_sc, meta['p25'], meta['p50'], meta['p75']),
+            "% Bahaya":            f"{dist_pct['Bahaya']:.1f}%",
+            "% Waspada":           f"{dist_pct['Waspada']:.1f}%",
+            "% Stabil":            f"{dist_pct['Stabil']:.1f}%",
+            "% Sangat Sehat":      f"{dist_pct['Sangat Sehat']:.1f}%",
         })
     df_summary = pd.DataFrame(summary_rows)
     st.dataframe(df_summary, use_container_width=True, hide_index=True)
 
     col1, col2 = st.columns(2)
     with col1:
+        export_cols = [c for c in fdf.columns if c not in ['PC1','PC2']]
         st.download_button("📥 Download Dataset Lengkap (CSV)",
-                           data=fdf.drop(columns=['PC1','PC2'], errors='ignore').to_csv(index=False).encode('utf-8'),
+                           data=fdf[export_cols].to_csv(index=False).encode('utf-8'),
                            file_name="hasil_clustering_finansial_IDR.csv", mime="text/csv",
                            use_container_width=True)
     with col2:
@@ -831,8 +899,10 @@ with tab5:
     • Dataset: <b>{len(df):,} mahasiswa</b> · Kurs konversi: 1 USD = Rp {KURS_USD_IDR:,}<br>
     • Algoritma: K-Means (k optimal={best_k}) · Silhouette Score={meta['sil']:.4f} · Davies-Bouldin={meta['db']:.4f}<br>
     • Fitur clustering: {len(meta['fitur'])} variabel · Data terfilter: {len(fdf):,} mahasiswa<br>
+    • Financial Score dihitung dari <b>biaya rutin</b> (exclude tuition/SPP) untuk akurasi lebih baik<br>
     • Kolom tambahan di output: <code>cluster</code>, <code>nama_cluster</code>,
-      <code>financial_score</code>, <code>status_finansial</code>
+      <code>financial_score</code>, <code>status_finansial</code>,
+      <code>pengeluaran_rutin</code>, <code>sisa_rutin</code>
     </div>""", unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
