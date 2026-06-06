@@ -53,10 +53,13 @@ body { background: #f1f5f9 !important; }
     margin-bottom: 6px;
 }
 .metric-card .value {
-    font-size: 1.6rem;
+    font-size: 1.25rem;
     font-weight: 800;
     color: #0f172a;
-    line-height: 1.1;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .metric-card .sub {
     font-size: 0.78rem;
@@ -163,15 +166,15 @@ def make_status(score: float, p25: float, p50: float, p75: float) -> str:
     return "Bahaya"
 
 def fmt_rupiah(val, short=True):
-    """Format nilai IDR. Mahasiswa: ratusan ribu – belasan juta per bulan."""
+    """Format nilai IDR. Kompak untuk KPI card."""
     if pd.isna(val):
         return "N/A"
     if short:
         if abs(val) >= 1_000_000:
-            return f"Rp {val/1_000_000:.2f} Juta"
+            return f"Rp{val/1_000_000:.1f}Jt"
         elif abs(val) >= 1_000:
-            return f"Rp {val/1_000:.0f} Ribu"
-        return f"Rp {val:.0f}"
+            return f"Rp{val/1_000:.0f}rb"
+        return f"Rp{val:.0f}"
     return f"Rp {val:,.0f}"
 
 def get_status_badge(status):
@@ -449,11 +452,11 @@ if year_opts:
 # ─────────────────────────────────────────────
 kpi_data = [
     ("Total Mahasiswa", f"{len(fdf):,}", "responden"),
-    ("Cluster Optimal", str(best_k), "K-Means"),
-    ("Silhouette Score", f"{meta['sil']:.3f}", "kualitas cluster"),
-    ("Avg Pemasukan", fmt_rupiah(fdf['total_pemasukan'].mean()), "per bulan"),
-    ("Avg Sisa Uang", fmt_rupiah(fdf['sisa_uang'].mean()), "per bulan"),
-    ("Avg Fin. Score", f"{fdf['financial_score'].mean():.1f}", "dari 100"),
+    ("Cluster", str(best_k), "K-Means optimal"),
+    ("Silhouette", f"{meta['sil']:.3f}", "kualitas cluster"),
+    ("Rata-rata Pemasukan", fmt_rupiah(fdf['total_pemasukan'].mean()), "per bulan"),
+    ("Rata-rata Sisa", fmt_rupiah(fdf['sisa_uang'].mean()), "per bulan"),
+    ("Skor Keuangan", f"{fdf['financial_score'].mean():.1f}", "rata-rata/100"),
 ]
 cols = st.columns(len(kpi_data))
 for col, (label, value, sub) in zip(cols, kpi_data):
@@ -570,24 +573,24 @@ with tab2:
             vertical_spacing=0.15,
             horizontal_spacing=0.08,
         )
-        for i, col in enumerate(numerik_cols):
-            r, c = divmod(i, 4)
-            data_col = fdf[col].dropna()
+        for i, col_n in enumerate(numerik_cols):
+            row_n, col_idx = divmod(i, 4)
+            data_col = fdf[col_n].dropna()
             fig.add_trace(
-                go.Histogram(x=data_col, nbinsx=25, name=col,
+                go.Histogram(x=data_col, nbinsx=25, name=lbl(col_n),
                              marker_color='#6366f1', opacity=0.75,
                              showlegend=False),
-                row=r+1, col=c+1,
+                row=row_n+1, col=col_idx+1,
             )
             fig.add_vline(
                 x=float(data_col.mean()),
                 line_dash='dash', line_color='#ef4444',
-                row=r+1, col=c+1,
+                row=row_n+1, col=col_idx+1,
             )
             fig.add_vline(
                 x=float(data_col.median()),
                 line_dash='solid', line_color='#10b981',
-                row=r+1, col=c+1,
+                row=row_n+1, col=col_idx+1,
             )
         fig.update_layout(height=520, title_text="Distribusi Numerik  🔴 Mean  🟢 Median",
                           **{k: v for k, v in PLOTLY_LAYOUT.items() if k not in ['xaxis','yaxis']},
