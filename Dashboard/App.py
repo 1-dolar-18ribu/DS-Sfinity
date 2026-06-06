@@ -105,7 +105,7 @@ body { background: #f1f5f9 !important; }
 # ─────────────────────────────────────────────
 # CONSTANTS
 # ─────────────────────────────────────────────
-KURS_USD_IDR = 16_000
+KURS_USD_IDR = 17_863  # Kurs tengah BI, 3 Juni 2026
 RASIO = {
     'pendidikan':     0.20,
     'tempat_tinggal': 0.30,
@@ -129,6 +129,30 @@ CLUSTER_PALETTE = [
     "#3b82f6","#f59e0b","#22c55e","#ef4444","#8b5cf6","#06b6d4"
 ]
 
+# Label tampilan untuk nama kolom teknis
+LABEL_KOLOM = {
+    'total_pemasukan':   'Total Pemasukan',
+    'total_pengeluaran': 'Total Pengeluaran',
+    'sisa_uang':         'Sisa Uang',
+    'rasio_pengeluaran': 'Rasio Pengeluaran',
+    'pendidikan':        'Pendidikan',
+    'tempat_tinggal':    'Tempat Tinggal',
+    'makanan':           'Makanan',
+    'transportasi':      'Transportasi',
+    'buku':              'Buku & Alat Tulis',
+    'hiburan':           'Hiburan',
+    'perawatan':         'Perawatan Diri',
+    'teknologi':         'Teknologi',
+    'kesehatan':         'Kesehatan',
+    'lainnya':           'Lainnya',
+    'financial_score':   'Skor Keuangan',
+    'usia':              'Usia',
+    'pendapatan':        'Pendapatan',
+    'bantuan':           'Bantuan Keuangan',
+}
+def lbl(col): return LABEL_KOLOM.get(col, col.replace('_', ' ').title()
+)
+
 # ─────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────
@@ -140,16 +164,16 @@ def make_status(score: float, p25: float, p50: float, p75: float) -> str:
     return "Bahaya"
 
 def fmt_rupiah(val, short=True):
-    """Format nilai IDR. Nilai mahasiswa tipikalnya ratusan ribu – belasan juta."""
+    """Format nilai IDR dengan satuan Bahasa Indonesia."""
     if pd.isna(val):
         return "N/A"
     if short:
-        if abs(val) >= 1_000_000_000:          # >= 1 Miliar
-            return f"Rp {val/1_000_000_000:.1f}M"
-        elif abs(val) >= 1_000_000:            # >= 1 Juta
-            return f"Rp {val/1_000_000:.2f}Jt"
-        elif abs(val) >= 1_000:               # >= 1 Ribu
-            return f"Rp {val/1_000:.1f}rb"
+        if abs(val) >= 1_000_000_000:
+            return f"Rp {val/1_000_000_000:.2f} Miliar"
+        elif abs(val) >= 1_000_000:
+            return f"Rp {val/1_000_000:.2f} Juta"
+        elif abs(val) >= 1_000:
+            return f"Rp {val/1_000:.1f} Ribu"
         return f"Rp {val:.0f}"
     return f"Rp {val:,.0f}"
 
@@ -545,11 +569,12 @@ with tab2:
         numerik_cols = ['usia','pendapatan','bantuan','total_pemasukan',
                         'total_pengeluaran','sisa_uang','rasio_pengeluaran','financial_score']
         numerik_cols = [c for c in numerik_cols if c in fdf.columns]
+        numerik_labels = [lbl(c) for c in numerik_cols]
 
         # Plotly: 2 baris × 4 kolom, responsif otomatis
         fig = make_subplots(
             rows=2, cols=4,
-            subplot_titles=numerik_cols,
+            subplot_titles=numerik_labels,
             vertical_spacing=0.15,
             horizontal_spacing=0.08,
         )
@@ -581,7 +606,7 @@ with tab2:
         fig = go.Figure()
         for i, col in enumerate(pengeluaran_cols):
             fig.add_trace(go.Box(
-                y=fdf[col].dropna(), name=col,
+                y=fdf[col].dropna(), name=lbl(col),
                 marker_color=px.colors.qualitative.Pastel[i % 10],
                 boxmean=True,
             ))
@@ -595,6 +620,7 @@ with tab2:
 
     elif eda_sub == "Komposisi Pengeluaran":
         rata = fdf[pengeluaran_cols].mean().sort_values(ascending=False)
+        rata.index = [lbl(c) for c in rata.index]
         col_l, col_r = st.columns(2)
         with col_l:
             fig = px.pie(values=rata.values, names=rata.index,
@@ -787,19 +813,22 @@ with tab4:
     profil_norm = ((profil_hm - profil_hm.mean()) / profil_hm.std()).round(2)
 
     x_labels = [nama_cluster.get(int(c), f"Cluster {int(c)}") for c in profil_hm.index]
-    annot = profil_hm.values.astype(float).round(0)
+    # JANGAN round(0) — rasio_pengeluaran akan jadi 0.00 kalau di-round ke integer
+    annot_raw = profil_hm.values.astype(float)
+
+    def _fmt_cell(v, col):
+        if col == 'rasio_pengeluaran':
+            return f"{v:.2f}"      # contoh: 0.82
+        if col == 'financial_score':
+            return f"{v:.1f}"
+        return fmt_rupiah(v)
 
     fig = go.Figure(go.Heatmap(
         z=profil_norm.values.T,
         x=x_labels,
-        y=kolom_hm,
-        text=[[
-               f"{v:.3f}" if col == 'rasio_pengeluaran' else
-               f"{v:.1f}" if col == 'financial_score'   else
-               fmt_rupiah(v)
-               for v in row
-           ]
-           for col, row in zip(kolom_hm, annot.T)],
+        y=[lbl(c) for c in kolom_hm],
+        text=[[_fmt_cell(v, col) for v in row]
+              for col, row in zip(kolom_hm, annot_raw.T)],
         texttemplate="%{text}",
         colorscale='RdYlGn',
         zmin=-2, zmax=2,
@@ -807,9 +836,11 @@ with tab4:
         hoverongaps=False,
     ))
     fig.update_layout(
-        **PLOTLY_LAYOUT, height=400,
+        **PLOTLY_LAYOUT, height=420,
         title="🗺️ Heatmap Profil Rata-rata per Cluster",
-        xaxis=dict(tickangle=0, tickfont=dict(size=11)),
+        xaxis=dict(tickangle=0, tickfont=dict(size=12)),
+        yaxis=dict(tickfont=dict(size=11)),
+        margin=dict(t=40, b=20, l=160, r=10),
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -818,7 +849,12 @@ with tab4:
     kpi_cols = ['total_pemasukan','total_pengeluaran','sisa_uang',
                 'rasio_pengeluaran','hiburan','teknologi','financial_score']
     kpi_cols = [c for c in kpi_cols if c in fdf.columns]
-    selected_kpi = st.selectbox("Pilih KPI:", kpi_cols, key="kpi_select")
+    kpi_labels = {c: lbl(c) for c in kpi_cols}
+    selected_kpi = st.selectbox(
+        "Pilih KPI:", kpi_cols,
+        format_func=lambda c: kpi_labels[c],
+        key="kpi_select"
+    )
 
     kpi_vals = fdf.groupby('nama_cluster')[selected_kpi].mean().reset_index()
     kpi_vals.columns = ['Cluster', 'Nilai']
@@ -830,11 +866,12 @@ with tab4:
             lambda v: f"{v:.2f}" if selected_kpi in ['rasio_pengeluaran','financial_score']
             else fmt_rupiah(v)
         ),
-        title=f"Rata-rata {selected_kpi} per Cluster",
+        title=f"Rata-rata {lbl(selected_kpi)} per Cluster",
+        labels={'Nilai': lbl(selected_kpi)},
     )
     fig.update_traces(textposition='outside')
     fig.update_layout(**PLOTLY_LAYOUT, height=360, showlegend=False,
-                      xaxis=dict(tickangle=-10, gridcolor='#e2e8f0'))
+                      xaxis=dict(tickangle=0, gridcolor='#e2e8f0'))
     st.plotly_chart(fig, use_container_width=True)
 
     # Status distribusi per cluster
@@ -858,7 +895,7 @@ with tab4:
     )
     fig.update_traces(textposition='inside', insidetextanchor='middle')
     fig.update_layout(**PLOTLY_LAYOUT, height=380,
-                      xaxis=dict(tickangle=-10, gridcolor='#e2e8f0'),
+                      xaxis=dict(tickangle=0, gridcolor='#e2e8f0'),
                       legend=dict(orientation='h', yanchor='bottom',
                                   y=-0.3, xanchor='center', x=0.5))
     st.plotly_chart(fig, use_container_width=True)
@@ -871,7 +908,7 @@ with tab4:
         color='nama_cluster',
         color_discrete_sequence=CLUSTER_PALETTE,
         box=True, points='outliers',
-        labels={'nama_cluster': 'Cluster', 'financial_score': 'Financial Health Score'},
+        labels={'nama_cluster': 'Cluster', 'financial_score': 'Skor Keuangan'},
         title="Violin Plot Financial Score per Cluster",
     )
     for th_val, th_col, th_lbl in [
@@ -883,7 +920,7 @@ with tab4:
                       annotation_text=th_lbl, annotation_position='right',
                       annotation_font_color=th_col)
     fig.update_layout(**PLOTLY_LAYOUT, height=400, showlegend=False,
-                      xaxis=dict(tickangle=-10, gridcolor='#e2e8f0'))
+                      xaxis=dict(tickangle=0, gridcolor='#e2e8f0'))
     st.plotly_chart(fig, use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
