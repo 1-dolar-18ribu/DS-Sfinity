@@ -747,7 +747,7 @@ for col, cl in zip(cols_cards, cluster_list):
                       title="Heatmap Profil Rata-rata per Cluster (Z-score, nilai asli di tiap sel)",
                       xaxis=dict(title="Segmen Cluster", tickangle=0, tickfont=dict(size=11)),
                       yaxis=dict(title="Variabel Keuangan", tickfont=dict(size=10)))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="t4_heatmap")
 
     # Perbandingan KPI
     st.markdown("#### 📊 Perbandingan KPI Antar Cluster")
