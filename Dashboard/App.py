@@ -150,8 +150,7 @@ LABEL_KOLOM = {
     'pendapatan':        'Pendapatan',
     'bantuan':           'Bantuan Keuangan',
 }
-def lbl(col): return LABEL_KOLOM.get(col, col.replace('_', ' ').title()
-)
+def lbl(col): return LABEL_KOLOM.get(col, col.replace('_', ' ').title())
 
 # ─────────────────────────────────────────────
 # HELPERS
@@ -164,16 +163,14 @@ def make_status(score: float, p25: float, p50: float, p75: float) -> str:
     return "Bahaya"
 
 def fmt_rupiah(val, short=True):
-    """Format nilai IDR dengan satuan Bahasa Indonesia."""
+    """Format nilai IDR. Mahasiswa: ratusan ribu – belasan juta per bulan."""
     if pd.isna(val):
         return "N/A"
     if short:
-        if abs(val) >= 1_000_000_000:
-            return f"Rp {val/1_000_000_000:.2f} Miliar"
-        elif abs(val) >= 1_000_000:
+        if abs(val) >= 1_000_000:
             return f"Rp {val/1_000_000:.2f} Juta"
         elif abs(val) >= 1_000:
-            return f"Rp {val/1_000:.1f} Ribu"
+            return f"Rp {val/1_000:.0f} Ribu"
         return f"Rp {val:.0f}"
     return f"Rp {val:,.0f}"
 
@@ -229,17 +226,12 @@ def load_and_process_data(file_key: str):
         'miscellaneous'  : 'lainnya',
     })
 
-    # ── konversi USD → IDR ──
-    for col in ['pendapatan', 'bantuan']:
+    # ── konversi USD → IDR (langsung ×kurs, tanpa pengali RASIO)
+    # Dataset student_spending sudah dalam USD per bulan untuk semua kolom
+    kolom_usd = ['pendapatan', 'bantuan'] + list(RASIO.keys())
+    for col in kolom_usd:
         if col in df.columns:
             df[col] = (df[col] * KURS_USD_IDR).round(0)
-
-    for col, r in RASIO.items():
-        if col in df.columns:
-            if col == 'pendidikan':
-                df[col] = (df[col] / 6 * KURS_USD_IDR * r).round(0)
-            else:
-                df[col] = (df[col] * KURS_USD_IDR * r).round(0)
 
     # ── derived ──
     df['total_pemasukan']   = df['pendapatan'] + df['bantuan']
