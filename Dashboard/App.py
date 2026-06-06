@@ -102,6 +102,14 @@ STATUS_COLORS = {
     "Stabil":"#3b82f6", "Sangat Sehat":"#22c55e"
 }
 CLUSTER_PALETTE = ["#E63946","#2A9D8F","#E9C46A","#457B9D","#F4A261","#A8DADC"]
+CLUSTER_NAME_COLORS = {
+    "Mahasiswa Mapan & Hemat"                : "#22c55e",
+    "Mahasiswa Hemat"                        : "#10b981",
+    "Mahasiswa Rata-rata"                    : "#3b82f6",
+    "Mahasiswa Berpenghasilan Rendah"        : "#f59e0b",
+    "Mahasiswa Boros / Defisit"              : "#ef4444",
+    "Mahasiswa Berpenghasilan Tinggi & Boros": "#f97316",
+}
 
 LABEL_KOLOM = {
     'total_pemasukan'   : 'Total Pemasukan (Rp)',
