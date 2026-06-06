@@ -140,13 +140,16 @@ def make_status(score: float, p25: float, p50: float, p75: float) -> str:
     return "Bahaya"
 
 def fmt_rupiah(val, short=True):
+    """Format nilai IDR. Nilai mahasiswa tipikalnya ratusan ribu – belasan juta."""
     if pd.isna(val):
         return "N/A"
     if short:
-        if abs(val) >= 1_000_000:
-            return f"Rp {val/1_000_000:.1f}Jt"
-        elif abs(val) >= 1_000:
-            return f"Rp {val/1_000:.0f}rb"
+        if abs(val) >= 1_000_000_000:          # >= 1 Miliar
+            return f"Rp {val/1_000_000_000:.1f}M"
+        elif abs(val) >= 1_000_000:            # >= 1 Juta
+            return f"Rp {val/1_000_000:.2f}Jt"
+        elif abs(val) >= 1_000:               # >= 1 Ribu
+            return f"Rp {val/1_000:.1f}rb"
         return f"Rp {val:.0f}"
     return f"Rp {val:,.0f}"
 
@@ -790,10 +793,13 @@ with tab4:
         z=profil_norm.values.T,
         x=x_labels,
         y=kolom_hm,
-        text=[[fmt_rupiah(v) if col not in ['rasio_pengeluaran','financial_score']
-               else f"{v:.2f}"
-               for v in row]
-              for col, row in zip(kolom_hm, annot.T)],
+        text=[[
+               f"{v:.3f}" if col == 'rasio_pengeluaran' else
+               f"{v:.1f}" if col == 'financial_score'   else
+               fmt_rupiah(v)
+               for v in row
+           ]
+           for col, row in zip(kolom_hm, annot.T)],
         texttemplate="%{text}",
         colorscale='RdYlGn',
         zmin=-2, zmax=2,
@@ -803,7 +809,7 @@ with tab4:
     fig.update_layout(
         **PLOTLY_LAYOUT, height=400,
         title="🗺️ Heatmap Profil Rata-rata per Cluster",
-        xaxis=dict(tickangle=-15),
+        xaxis=dict(tickangle=0, tickfont=dict(size=11)),
     )
     st.plotly_chart(fig, use_container_width=True)
 
