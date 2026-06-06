@@ -691,6 +691,7 @@ with tab3:
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ══════════════ TAB 4 — PROFIL CLUSTER ════════════════════════════════════════
+# ══════════════ TAB 4 — PROFIL CLUSTER ════════════════════════════════════════
 with tab4:
     st.markdown('<div class="section-card"><div class="section-title">🏷️ Profil & Karakteristik Cluster</div>'
                 '<div class="section-sub">Ringkasan mendalam setiap segmen mahasiswa berdasarkan hasil clustering</div>',
@@ -701,25 +702,20 @@ with tab4:
         subset = fdf[fdf['cluster'] == cl]
         avg_sc = subset['financial_score'].mean() if len(subset) > 0 else 0
         status = make_status(avg_sc, meta['p25'], meta['p50'], meta['p75'])
-        color  = CLUSTER_PALETTE[int(cl) % len(CLUSTER_PALETTE)]
-for col, cl in zip(cols_cards, cluster_list):
-    subset = fdf[fdf['cluster'] == cl]
-    avg_sc = subset['financial_score'].mean() if len(subset) > 0 else 0
-    status = make_status(avg_sc, meta['p25'], meta['p50'], meta['p75'])
-    color  = CLUSTER_NAME_COLORS.get(nama_cluster[int(cl)], "#3b82f6")  # ← ini yang diubah
-    with col:
-        st.markdown(f"""
-        <div style="background:white;border-top:4px solid {color};border-radius:12px;
-                    padding:16px;text-align:center;box-shadow:0 1px 6px rgba(0,0,0,.08);">
-            <div style="font-size:11px;color:#94a3b8;font-weight:700;letter-spacing:.08em;
-                        text-transform:uppercase;">Cluster {int(cl)}</div>
-            <div style="font-size:13px;font-weight:800;color:{color};margin:6px 0;line-height:1.4;">
-                {nama_cluster[int(cl)]}</div>
-            <div style="font-size:12px;color:#64748b;">{len(subset):,} mahasiswa</div>
-            <div style="margin-top:8px;">{get_status_badge(status)}</div>
-            <div style="font-size:12px;color:#94a3b8;margin-top:5px;">
-                Score: {avg_sc:.1f} · Pemasukan: {fmt_rupiah(subset['total_pemasukan'].mean())}</div>
-        </div>""", unsafe_allow_html=True)
+        color  = CLUSTER_NAME_COLORS.get(nama_cluster[int(cl)], "#3b82f6")
+        with col:
+            st.markdown(f"""
+            <div style="background:white;border-top:4px solid {color};border-radius:12px;
+                        padding:16px;text-align:center;box-shadow:0 1px 6px rgba(0,0,0,.08);">
+                <div style="font-size:11px;color:#94a3b8;font-weight:700;letter-spacing:.08em;
+                            text-transform:uppercase;">Cluster {int(cl)}</div>
+                <div style="font-size:13px;font-weight:800;color:{color};margin:6px 0;line-height:1.4;">
+                    {nama_cluster[int(cl)]}</div>
+                <div style="font-size:12px;color:#64748b;">{len(subset):,} mahasiswa</div>
+                <div style="margin-top:8px;">{get_status_badge(status)}</div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:5px;">
+                    Score: {avg_sc:.1f} · Pemasukan: {fmt_rupiah(subset['total_pemasukan'].mean())}</div>
+            </div>""", unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -775,7 +771,7 @@ for col, cl in zip(cols_cards, cluster_list):
         fig.update_layout(yaxis=dict(tickvals=tvs, ticktext=tts, title=kolom_label(selected_kpi)))
     fig.update_layout(**PL, height=380, showlegend=False, margin=M,
                       xaxis=dict(tickangle=0, gridcolor='#e2e8f0', title='Segmen Cluster'))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="t4_bar_kpi")
 
     # Distribusi status per cluster
     st.markdown("#### 📊 Distribusi Status Finansial per Cluster")
@@ -793,7 +789,7 @@ for col, cl in zip(cols_cards, cluster_list):
                       xaxis=dict(tickangle=0, gridcolor='#e2e8f0', title='Segmen Cluster'),
                       yaxis_title="Persentase Mahasiswa (%)",
                       legend=dict(orientation='h', yanchor='bottom', y=-0.3, xanchor='center', x=0.5))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="t4_bar_status")
 
     # Violin plot
     st.markdown("#### 🎻 Sebaran Financial Score per Cluster")
@@ -813,9 +809,8 @@ for col, cl in zip(cols_cards, cluster_list):
     fig.update_layout(**PL, height=420, showlegend=False, margin=M,
                       xaxis=dict(tickangle=0, gridcolor='#e2e8f0', title='Segmen Cluster'),
                       yaxis_title="Financial Health Score (0–100)")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="t4_violin")
     st.markdown('</div>', unsafe_allow_html=True)
-
 # ══════════════ TAB 5 — EXPORT ════════════════════════════════════════════════
 with tab5:
     st.markdown('<div class="section-card"><div class="section-title">📥 Export & Ringkasan Akhir</div>'
